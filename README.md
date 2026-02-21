@@ -1,1 +1,1 @@
-# semantic--photo
+# semantic-photo

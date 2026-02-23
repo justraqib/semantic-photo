@@ -1,4 +1,4 @@
-export default function PhotoCard({ photo, onOpen }) {
+export default function PhotoCard({ photo, onOpen, renderActions }) {
   const takenAt = photo?.taken_at ? new Date(photo.taken_at) : null;
   const dateLabel = takenAt && !Number.isNaN(takenAt.getTime())
     ? takenAt.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
@@ -29,6 +29,15 @@ export default function PhotoCard({ photo, onOpen }) {
       >
         <input type="checkbox" className="h-4 w-4" aria-label="Select photo" />
       </label>
+
+      {renderActions && (
+        <div
+          className="absolute right-2 top-2 opacity-0 transition group-hover:opacity-100"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {renderActions(photo)}
+        </div>
+      )}
     </button>
   );
 }

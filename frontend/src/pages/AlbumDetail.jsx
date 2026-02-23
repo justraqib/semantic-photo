@@ -12,6 +12,7 @@ export default function AlbumDetail() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
   const [nameError, setNameError] = useState('');
+  const [openMenuPhotoId, setOpenMenuPhotoId] = useState(null);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['album-detail', albumId],
@@ -42,6 +43,18 @@ export default function AlbumDetail() {
     },
     onError: (error) => {
       setNameError(error?.response?.data?.detail || 'Unable to rename album');
+    },
+  });
+
+  const setCoverMutation = useMutation({
+    mutationFn: async (photoId) => {
+      const response = await patchAlbum(albumId, { cover_photo_id: photoId });
+      return response.data;
+    },
+    onSuccess: () => {
+      setOpenMenuPhotoId(null);
+      queryClient.invalidateQueries({ queryKey: ['album-detail', albumId] });
+      queryClient.invalidateQueries({ queryKey: ['albums'] });
     },
   });
 
@@ -132,7 +145,33 @@ export default function AlbumDetail() {
               This album has no photos yet.
             </div>
           ) : (
-            <PhotoGrid photos={photos} onPhotoClick={setSelectedPhoto} />
+            <PhotoGrid
+              photos={photos}
+              onPhotoClick={setSelectedPhoto}
+              renderActions={(photo) => (
+                <div className="relative">
+                  <button
+                    type="button"
+                    className="rounded bg-white/90 px-2 py-1 text-sm shadow hover:bg-white"
+                    onClick={() => setOpenMenuPhotoId((prev) => (prev === photo.id ? null : photo.id))}
+                  >
+                    ⋯
+                  </button>
+                  {openMenuPhotoId === photo.id && (
+                    <div className="absolute right-0 mt-1 w-44 rounded-lg border border-slate-200 bg-white p-1 shadow-xl">
+                      <button
+                        type="button"
+                        onClick={() => setCoverMutation.mutate(photo.id)}
+                        className="block w-full rounded px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100"
+                        disabled={setCoverMutation.isPending}
+                      >
+                        Set as cover photo
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            />
           )}
         </>
       )}

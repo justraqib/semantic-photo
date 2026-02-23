@@ -13,3 +13,4 @@ exifread
 imagehash
 redis
 python-multipart
+slowapi

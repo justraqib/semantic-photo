@@ -8,7 +8,7 @@ export default function AuthSuccess() {
 
   useEffect(() => {
     queryClient.invalidateQueries({ queryKey: ['user'] });
-    navigate('/');
+    navigate('/gallery');
   }, []);
 
   return <div style={{ textAlign: 'center', marginTop: '40vh' }}>Signing you in...</div>;

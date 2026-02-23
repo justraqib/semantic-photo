@@ -23,6 +23,10 @@ class UpdateAlbumPayload(BaseModel):
     cover_photo_id: str | None = None
 
 
+class AddAlbumPhotosPayload(BaseModel):
+    photo_ids: list[str]
+
+
 @router.get("")
 async def list_albums(
     current_user: User = Depends(require_current_user),
@@ -253,3 +257,63 @@ async def delete_album(
     await db.delete(album)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/{album_id}/photos")
+async def add_photos_to_album(
+    payload: AddAlbumPhotosPayload,
+    album_id: str = Path(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        album_uuid = UUID(album_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid album id") from exc
+
+    album_result = await db.execute(
+        select(Album).where(Album.id == album_uuid, Album.user_id == current_user.id)
+    )
+    album = album_result.scalar_one_or_none()
+    if album is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    max_position_result = await db.execute(
+        select(func.max(AlbumPhoto.position)).where(AlbumPhoto.album_id == album.id)
+    )
+    next_position = (max_position_result.scalar_one() or 0) + 1
+
+    inserted_count = 0
+    for photo_id_str in payload.photo_ids:
+        try:
+            photo_uuid = UUID(photo_id_str)
+        except ValueError:
+            continue
+
+        photo_result = await db.execute(
+            select(Photo.id).where(Photo.id == photo_uuid, Photo.user_id == current_user.id)
+        )
+        if photo_result.scalar_one_or_none() is None:
+            continue
+
+        existing_result = await db.execute(
+            select(AlbumPhoto).where(
+                AlbumPhoto.album_id == album.id,
+                AlbumPhoto.photo_id == photo_uuid,
+            )
+        )
+        if existing_result.scalar_one_or_none():
+            continue
+
+        db.add(
+            AlbumPhoto(
+                album_id=album.id,
+                photo_id=photo_uuid,
+                position=next_position,
+            )
+        )
+        next_position += 1
+        inserted_count += 1
+
+    await db.commit()
+    return {"ok": True, "inserted": inserted_count}

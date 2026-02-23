@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.core.rate_limit import limiter
 from app.models.user import User
 from app.services import clip_client
+from app.services.storage import generate_presigned_url
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -51,7 +52,7 @@ async def search_photos(
         items.append(
             {
                 "id": str(row["id"]),
-                "thumbnail_key": row["thumbnail_key"],
+                "thumbnail_url": generate_presigned_url(row["thumbnail_key"]) if row["thumbnail_key"] else None,
                 "taken_at": row["taken_at"].isoformat() if row["taken_at"] else None,
                 "score": float(row["score"]) if row["score"] is not None else 0.0,
             }

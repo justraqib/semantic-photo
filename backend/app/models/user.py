@@ -15,6 +15,7 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     oauth_accounts = relationship("OAuthAccount", back_populates="user")
     refresh_tokens = relationship("RefreshToken", back_populates="user")
+    photos = relationship("Photo", back_populates="user")
 
 class OAuthAccount(Base):
     __tablename__ = "oauth_accounts"

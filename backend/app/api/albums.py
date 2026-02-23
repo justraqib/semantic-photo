@@ -230,3 +230,26 @@ async def update_album(
         "cover_photo_id": str(album.cover_photo_id) if album.cover_photo_id else None,
         "cover_thumbnail_url": cover_thumbnail_url,
     }
+
+
+@router.delete("/{album_id}")
+async def delete_album(
+    album_id: str = Path(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        album_uuid = UUID(album_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid album id") from exc
+
+    album_result = await db.execute(
+        select(Album).where(Album.id == album_uuid, Album.user_id == current_user.id)
+    )
+    album = album_result.scalar_one_or_none()
+    if album is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    await db.delete(album)
+    await db.commit()
+    return {"ok": True}

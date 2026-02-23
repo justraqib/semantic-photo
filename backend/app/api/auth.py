@@ -8,7 +8,8 @@ from app.core.database import get_db
 from app.core.security import create_access_token, decode_access_token, hash_token
 from app.services.auth_service import get_or_create_user, create_refresh_token_for_user, get_current_user
 from sqlalchemy import select
-from app.models.user import RefreshToken, User
+from app.models.drive import DriveSyncState
+from app.models.user import OAuthAccount, RefreshToken, User
 from datetime import datetime, timezone
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -78,6 +79,27 @@ async def google_callback(code: str, response: Response, db: AsyncSession = Depe
     google_user = userinfo_response.json()
 
     user = await get_or_create_user(db, google_user)
+    provider_user_id = str(google_user["sub"])
+
+    oauth_result = await db.execute(
+        select(OAuthAccount).where(
+            OAuthAccount.provider == "google",
+            OAuthAccount.provider_user_id == provider_user_id,
+        )
+    )
+    oauth_account = oauth_result.scalar_one_or_none()
+    if oauth_account is not None:
+        oauth_account.access_token = token_data.get("access_token")
+        if token_data.get("refresh_token"):
+            oauth_account.refresh_token = token_data.get("refresh_token")
+
+    state_result = await db.execute(select(DriveSyncState).where(DriveSyncState.user_id == user.id))
+    sync_state = state_result.scalar_one_or_none()
+    if sync_state is None:
+        db.add(DriveSyncState(user_id=user.id, sync_enabled=True))
+
+    await db.commit()
+
     access_token = create_access_token(str(user.id))
     raw_refresh_token = await create_refresh_token_for_user(db, user.id)
 

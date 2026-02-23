@@ -67,3 +67,31 @@ async def connect_sync(
         "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
         "last_error": state.last_error,
     }
+
+
+@router.get("/status")
+async def get_sync_status(
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(DriveSyncState).where(DriveSyncState.user_id == current_user.id))
+    state = result.scalar_one_or_none()
+
+    if state is None:
+        return {
+            "connected": False,
+            "folder_name": None,
+            "last_sync_at": None,
+            "sync_enabled": False,
+            "status": "idle",
+            "last_error": None,
+        }
+
+    return {
+        "connected": bool(state.folder_id),
+        "folder_name": state.folder_name,
+        "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
+        "sync_enabled": state.sync_enabled,
+        "status": "idle",
+        "last_error": state.last_error,
+    }

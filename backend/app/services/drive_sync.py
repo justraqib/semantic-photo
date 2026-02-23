@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import AsyncSessionLocal
 from app.jobs.queue import push_embedding_job
 from app.models.photo import Photo
 from app.models.drive import DriveSyncState
@@ -189,3 +190,18 @@ async def sync_user(user_id, db: AsyncSession) -> None:
 
     state.next_page_token = payload.get("nextPageToken") or payload.get("newStartPageToken") or state.next_page_token
     await db.commit()
+
+
+async def sync_all_users() -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(DriveSyncState.user_id).where(DriveSyncState.sync_enabled.is_(True))
+        )
+        user_ids = [row[0] for row in result.all()]
+
+    for user_id in user_ids:
+        async with AsyncSessionLocal() as db:
+            try:
+                await sync_user(user_id, db)
+            except Exception as exc:
+                print(f"Drive sync for user {user_id} failed: {exc}")

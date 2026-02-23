@@ -1,5 +1,6 @@
 import asyncio
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
@@ -13,11 +14,13 @@ from app.api.sync import router as sync_router
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.jobs.workers import run_embedding_worker
+from app.services.drive_sync import sync_all_users
 
 app = FastAPI(title="Semantic Photo", version="1.0.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+scheduler = AsyncIOScheduler()
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,7 +40,16 @@ app.include_router(sync_router)
 @app.on_event("startup")
 async def start_worker() -> None:
     asyncio.create_task(run_embedding_worker())
+    scheduler.add_job(sync_all_users, "interval", minutes=30, id="drive_sync_all_users", replace_existing=True)
+    scheduler.start()
     print("Worker started")
+    print("Drive sync scheduler started")
+
+
+@app.on_event("shutdown")
+async def shutdown_scheduler() -> None:
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
 
 
 @app.get("/health")

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +11,10 @@ from app.models.user import User
 from app.services.storage import generate_presigned_url
 
 router = APIRouter(prefix="/albums", tags=["albums"])
+
+
+class CreateAlbumPayload(BaseModel):
+    name: str
 
 
 @router.get("")
@@ -57,3 +62,29 @@ async def list_albums(
         )
 
     return albums
+
+
+@router.post("")
+async def create_album(
+    payload: CreateAlbumPayload,
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Album name is required")
+    if len(name) > 100:
+        raise HTTPException(status_code=400, detail="Album name must be 100 characters or fewer")
+
+    album = Album(user_id=current_user.id, name=name)
+    db.add(album)
+    await db.commit()
+    await db.refresh(album)
+
+    return {
+        "id": str(album.id),
+        "name": album.name,
+        "cover_photo_id": None,
+        "photo_count": 0,
+        "cover_thumbnail_url": None,
+    }

@@ -29,6 +29,7 @@ export default function Gallery() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const sentinelRef = useRef(null);
   const isSearchActive = query.trim().length >= 2;
+  const clearSearch = () => setQuery('');
 
   const selectedIndex = useMemo(
     () => photos.findIndex((p) => p.id === selectedPhoto?.id),
@@ -67,9 +68,25 @@ export default function Gallery() {
     <div className="mx-auto max-w-[1600px] p-4 md:p-8">
       <SearchBar
         onSearch={setQuery}
-        onClear={() => setQuery('')}
+        onClear={clearSearch}
         isSearching={isSearching}
       />
+
+      {isSearchActive && (
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-700">
+          <span>
+            Showing results for "{query}"
+          </span>
+          <button
+            type="button"
+            onClick={clearSearch}
+            className="rounded-md px-2 py-1 text-xl leading-none text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            aria-label="Clear search"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {isLoading && photos.length === 0 && <SkeletonGrid />}
 
@@ -84,7 +101,7 @@ export default function Gallery() {
       {isSearchActive && (
         <>
           {!isSearching && searchResults.length === 0 && (
-            <SearchEmptyState query={query} onClear={() => setQuery('')} />
+            <SearchEmptyState query={query} onClear={clearSearch} />
           )}
           {searchResults.length > 0 && (
             <SearchResults results={searchResults} onPhotoClick={setSelectedPhoto} />

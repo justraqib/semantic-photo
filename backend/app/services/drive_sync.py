@@ -1,16 +1,32 @@
 from __future__ import annotations
 
 import httpx
+from datetime import datetime
+from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.drive import DriveSyncState
+from app.jobs.queue import push_embedding_job
 from app.models.photo import Photo
+from app.models.drive import DriveSyncState
 from app.models.user import OAuthAccount
+from app.services.dedup import compute_phash, is_duplicate
+from app.services.exif import extract_exif
+from app.services.storage import upload_file
+from app.services.thumbnail import generate_thumbnail
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
+
+
+def _parse_taken_at(exif_taken_at: str | None) -> datetime | None:
+    if not exif_taken_at:
+        return None
+    try:
+        return datetime.strptime(exif_taken_at, "%Y:%m:%d %H:%M:%S")
+    except ValueError:
+        return None
 
 
 async def refresh_access_token(refresh_token: str) -> str:
@@ -109,6 +125,67 @@ async def sync_user(user_id, db: AsyncSession) -> None:
         filtered_changes.append(change)
 
     print(f"Drive sync for user {user_id}: {len(filtered_changes)} changes passed filtering")
+
+    async with httpx.AsyncClient(timeout=60.0) as download_client:
+        for change in filtered_changes:
+            file_data = change.get("file") or {}
+            source_id = file_data.get("id") or change.get("fileId")
+            mime_type = file_data.get("mimeType") or "image/jpeg"
+            file_name = file_data.get("name") or f"{source_id}.jpg"
+
+            try:
+                file_response = await download_client.get(
+                    f"{GOOGLE_DRIVE_API_BASE}/files/{source_id}",
+                    headers=headers,
+                    params={"alt": "media"},
+                )
+                file_response.raise_for_status()
+                file_bytes = file_response.content
+            except Exception as exc:
+                print(f"Drive sync for user {user_id}: failed downloading file {source_id}: {exc}")
+                continue
+
+            try:
+                phash_str = compute_phash(file_bytes)
+                if await is_duplicate(phash_str, str(user_id), db):
+                    print(f"Drive sync for user {user_id}: duplicate file skipped {source_id}")
+                    continue
+
+                thumbnail_bytes = generate_thumbnail(file_bytes)
+                exif = extract_exif(file_bytes)
+
+                storage_key = f"users/{user_id}/photos/{uuid4()}.jpg"
+                thumbnail_key = f"users/{user_id}/thumbnails/{uuid4()}.webp"
+                upload_file(file_bytes, storage_key, mime_type)
+                upload_file(thumbnail_bytes, thumbnail_key, "image/webp")
+
+                photo = Photo(
+                    user_id=user_id,
+                    storage_key=storage_key,
+                    thumbnail_key=thumbnail_key,
+                    original_filename=file_name,
+                    file_size_bytes=len(file_bytes),
+                    mime_type=mime_type,
+                    width=exif.get("width"),
+                    height=exif.get("height"),
+                    taken_at=_parse_taken_at(exif.get("taken_at")),
+                    source="google_drive",
+                    source_id=source_id,
+                    phash=phash_str,
+                    embedding=None,
+                    caption=None,
+                    gps_lat=exif.get("gps_lat"),
+                    gps_lng=exif.get("gps_lng"),
+                    camera_make=exif.get("camera_make"),
+                    is_deleted=False,
+                )
+                db.add(photo)
+                await db.flush()
+                push_embedding_job(str(photo.id))
+                print(f"Drive sync for user {user_id}: imported file {source_id} successfully")
+            except Exception as exc:
+                print(f"Drive sync for user {user_id}: failed processing file {source_id}: {exc}")
+                continue
 
     state.next_page_token = payload.get("nextPageToken") or payload.get("newStartPageToken") or state.next_page_token
     await db.commit()

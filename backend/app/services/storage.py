@@ -56,3 +56,9 @@ def generate_presigned_url(key: str, expires_in: int = 3600) -> str:
         Params={"Bucket": _get_bucket_name(), "Key": key},
         ExpiresIn=expires_in,
     )
+
+
+def get_file(key: str) -> bytes:
+    client = _get_client()
+    response = client.get_object(Bucket=_get_bucket_name(), Key=key)
+    return response["Body"].read()

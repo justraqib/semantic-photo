@@ -26,6 +26,7 @@ class Photo(Base):
     source_id = Column(String, nullable=True)
     phash = Column(String, nullable=True)
     embedding = Column(Text, nullable=True)
+    embedding_generated_at = Column(DateTime(timezone=True), nullable=True)
     caption = Column(Text, nullable=True)
     gps_lat = Column(Float, nullable=True)
     gps_lng = Column(Float, nullable=True)

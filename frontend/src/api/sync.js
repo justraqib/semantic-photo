@@ -11,3 +11,4 @@ export const selectDriveFolder = (payload) => syncApi.post('/sync/folder', paylo
 export const connectDriveSync = () => syncApi.post('/sync/connect');
 export const getSyncStatus = () => syncApi.get('/sync/status');
 export const triggerSync = () => syncApi.post('/sync/trigger');
+export const disconnectDriveSync = () => syncApi.delete('/sync/disconnect');

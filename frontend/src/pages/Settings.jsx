@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   connectDriveSync,
+  disconnectDriveSync,
   getSyncStatus,
   selectDriveFolder,
   triggerSync,
@@ -110,6 +111,12 @@ export default function Settings() {
     }
   };
 
+  const handleDisconnect = async () => {
+    await disconnectDriveSync();
+    await loadStatus();
+    setStatus('Drive sync disconnected');
+  };
+
   return (
     <div className="mx-auto max-w-[900px] p-4 md:p-8">
       <h1 className="mb-4 text-2xl font-semibold text-slate-900">Settings</h1>
@@ -148,6 +155,13 @@ export default function Settings() {
                 <input type="checkbox" checked={!!syncState.sync_enabled} readOnly />
                 Auto-sync enabled
               </label>
+              <button
+                type="button"
+                onClick={handleDisconnect}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+              >
+                Disconnect
+              </button>
             </div>
             {syncState.last_error && (
               <p className="rounded-md bg-red-50 px-3 py-2 text-red-700">{syncState.last_error}</p>

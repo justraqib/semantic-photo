@@ -3,11 +3,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
+import httpx
 
 from app.api.auth import require_current_user
 from app.core.database import get_db
 from app.models.drive import DriveSyncState
-from app.models.user import User
+from app.models.user import OAuthAccount, User
 from app.services.drive_sync import sync_user
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -123,3 +124,40 @@ async def trigger_sync(
         state.last_error = str(exc)
         await db.commit()
         return {"ok": False, "error": str(exc)}
+
+
+@router.delete("/disconnect")
+async def disconnect_sync(
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(DriveSyncState).where(DriveSyncState.user_id == current_user.id))
+    state = result.scalar_one_or_none()
+    if state is None:
+        state = DriveSyncState(user_id=current_user.id, sync_enabled=False)
+        db.add(state)
+    else:
+        state.sync_enabled = False
+        state.folder_id = None
+        state.folder_name = None
+        state.next_page_token = None
+
+    oauth_result = await db.execute(
+        select(OAuthAccount).where(
+            OAuthAccount.user_id == current_user.id,
+            OAuthAccount.provider == "google",
+        )
+    )
+    oauth_account = oauth_result.scalar_one_or_none()
+    if oauth_account and oauth_account.refresh_token:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.post(
+                    "https://oauth2.googleapis.com/revoke",
+                    params={"token": oauth_account.refresh_token},
+                )
+        except Exception:
+            pass
+
+    await db.commit()
+    return {"ok": True}

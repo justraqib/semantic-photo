@@ -4,6 +4,7 @@ import EmptyState from '../components/EmptyState';
 import Lightbox from '../components/Lightbox';
 import PhotoGrid from '../components/PhotoGrid';
 import SearchBar from '../components/SearchBar';
+import SearchResults from '../components/SearchResults';
 import UploadModal from '../components/UploadModal';
 import { usePhotos } from '../hooks/usePhotos';
 import { useSearch } from '../hooks/useSearch';
@@ -22,10 +23,11 @@ export default function Gallery() {
   const queryClient = useQueryClient();
   const { photos, fetchNextPage, hasNextPage, isLoading } = usePhotos();
   const [query, setQuery] = useState('');
-  const { isLoading: isSearching } = useSearch(query);
+  const { results: searchResults, isLoading: isSearching } = useSearch(query);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const sentinelRef = useRef(null);
+  const isSearchActive = query.trim().length >= 2;
 
   const selectedIndex = useMemo(
     () => photos.findIndex((p) => p.id === selectedPhoto?.id),
@@ -74,11 +76,15 @@ export default function Gallery() {
         <EmptyState message="Upload your first photo to get started" />
       )}
 
-      {photos.length > 0 && (
+      {!isSearchActive && photos.length > 0 && (
         <PhotoGrid photos={photos} onPhotoClick={setSelectedPhoto} />
       )}
 
-      <div ref={sentinelRef} className="h-8" />
+      {isSearchActive && (
+        <SearchResults results={searchResults} onPhotoClick={setSelectedPhoto} />
+      )}
+
+      {!isSearchActive && <div ref={sentinelRef} className="h-8" />}
 
       <button
         type="button"

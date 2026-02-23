@@ -2,11 +2,13 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timezone
 
 from app.api.auth import require_current_user
 from app.core.database import get_db
 from app.models.drive import DriveSyncState
 from app.models.user import User
+from app.services.drive_sync import sync_user
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -95,3 +97,29 @@ async def get_sync_status(
         "status": "idle",
         "last_error": state.last_error,
     }
+
+
+@router.post("/trigger")
+async def trigger_sync(
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(DriveSyncState).where(DriveSyncState.user_id == current_user.id))
+    state = result.scalar_one_or_none()
+    if state is None:
+        state = DriveSyncState(user_id=current_user.id, sync_enabled=True)
+        db.add(state)
+        await db.flush()
+
+    state.last_error = None
+    await db.commit()
+
+    try:
+        await sync_user(current_user.id, db)
+        state.last_sync_at = datetime.now(timezone.utc)
+        await db.commit()
+        return {"ok": True}
+    except Exception as exc:
+        state.last_error = str(exc)
+        await db.commit()
+        return {"ok": False, "error": str(exc)}

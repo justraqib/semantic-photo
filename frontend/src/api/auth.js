@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
 const api = axios.create({
-  baseURL: 'http://localhost:8000',
+  baseURL: API_BASE_URL,
   withCredentials: true,
 });
 
@@ -24,5 +26,5 @@ api.interceptors.response.use(
 export const getMe = () => api.get('/auth/me');
 export const logout = () => api.post('/auth/logout');
 export const loginWithGoogle = () => {
-  window.location.href = 'http://localhost:8000/auth/google/login';
+  window.location.href = `${API_BASE_URL}/auth/google`;
 };

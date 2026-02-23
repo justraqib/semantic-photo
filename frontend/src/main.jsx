@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage';
 import Home from './pages/Home';
 import AuthSuccess from './pages/AuthSuccess';
 import { useAuth } from './hooks/useAuth';
+import './index.css';
 
 const queryClient = new QueryClient();
 
@@ -21,7 +22,8 @@ function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/auth/success" element={<AuthSuccess />} />
-        <Route path="/" element={
+        <Route path="/" element={<Navigate to="/gallery" replace />} />
+        <Route path="/gallery" element={
           <ProtectedRoute><Home /></ProtectedRoute>
         } />
       </Routes>

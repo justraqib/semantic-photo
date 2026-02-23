@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
+from urllib.parse import urlencode
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token, decode_access_token, hash_token
@@ -34,15 +35,23 @@ async def require_current_user(request: Request, db: AsyncSession = Depends(get_
 @router.get("/google")
 @router.get("/google/login")
 async def google_login():
+    scope = " ".join(
+        [
+            "openid",
+            "email",
+            "profile",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ]
+    )
     params = {
         "client_id": settings.GOOGLE_CLIENT_ID,
         "redirect_uri": f"{settings.BACKEND_URL}/auth/google/callback",
         "response_type": "code",
-        "scope": "openid email profile",
+        "scope": scope,
         "access_type": "offline",
         "prompt": "consent"
     }
-    query = "&".join(f"{k}={v}" for k, v in params.items())
+    query = urlencode(params)
     return RedirectResponse(f"{GOOGLE_AUTH_URL}?{query}")
 
 @router.get("/google/callback")

@@ -16,6 +16,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize"
+GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
+GITHUB_USER_URL = "https://api.github.com/user"
+GITHUB_USER_EMAILS_URL = "https://api.github.com/user/emails"
 
 
 async def require_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
@@ -145,3 +149,114 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 @router.get("/me")
 async def get_me(user: User = Depends(require_current_user)):
     return {"id": str(user.id), "email": user.email, "display_name": user.display_name, "avatar_url": user.avatar_url}
+
+
+@router.get("/github")
+async def github_login():
+    if not settings.GITHUB_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="GitHub OAuth is not configured")
+
+    params = {
+        "client_id": settings.GITHUB_CLIENT_ID,
+        "redirect_uri": f"{settings.BACKEND_URL}/auth/github/callback",
+        "scope": "read:user user:email",
+    }
+    return RedirectResponse(f"{GITHUB_AUTH_URL}?{urlencode(params)}")
+
+
+@router.get("/github/callback")
+async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
+    if not settings.GITHUB_CLIENT_ID or not settings.GITHUB_CLIENT_SECRET:
+        raise HTTPException(status_code=500, detail="GitHub OAuth is not configured")
+
+    async with httpx.AsyncClient() as client:
+        token_response = await client.post(
+            GITHUB_TOKEN_URL,
+            data={
+                "client_id": settings.GITHUB_CLIENT_ID,
+                "client_secret": settings.GITHUB_CLIENT_SECRET,
+                "code": code,
+                "redirect_uri": f"{settings.BACKEND_URL}/auth/github/callback",
+            },
+            headers={"Accept": "application/json"},
+        )
+
+    if token_response.status_code != 200:
+        raise HTTPException(status_code=400, detail="Failed to exchange code with GitHub")
+    token_data = token_response.json()
+    access_token = token_data.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=400, detail="GitHub token response missing access_token")
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    async with httpx.AsyncClient() as client:
+        user_response = await client.get(GITHUB_USER_URL, headers=headers)
+        emails_response = await client.get(GITHUB_USER_EMAILS_URL, headers=headers)
+
+    if user_response.status_code != 200:
+        raise HTTPException(status_code=400, detail="Failed to fetch GitHub user profile")
+    github_user = user_response.json()
+
+    email = github_user.get("email")
+    if not email and emails_response.status_code == 200:
+        for item in emails_response.json():
+            if item.get("primary") and item.get("verified") and item.get("email"):
+                email = item["email"]
+                break
+        if not email:
+            for item in emails_response.json():
+                if item.get("email"):
+                    email = item["email"]
+                    break
+    if not email:
+        raise HTTPException(status_code=400, detail="Unable to resolve GitHub account email")
+
+    provider_user_id = str(github_user["id"])
+    oauth_result = await db.execute(
+        select(OAuthAccount).where(
+            OAuthAccount.provider == "github",
+            OAuthAccount.provider_user_id == provider_user_id,
+        )
+    )
+    oauth_account = oauth_result.scalar_one_or_none()
+
+    if oauth_account is not None:
+        user_result = await db.execute(select(User).where(User.id == oauth_account.user_id))
+        user = user_result.scalar_one()
+        user.display_name = github_user.get("name") or github_user.get("login") or user.display_name
+        user.avatar_url = github_user.get("avatar_url") or user.avatar_url
+        oauth_account.access_token = access_token
+    else:
+        user_result = await db.execute(select(User).where(User.email == email))
+        user = user_result.scalar_one_or_none()
+        if user is None:
+            user = User(
+                email=email,
+                display_name=github_user.get("name") or github_user.get("login"),
+                avatar_url=github_user.get("avatar_url"),
+            )
+            db.add(user)
+            await db.flush()
+
+        db.add(
+            OAuthAccount(
+                user_id=user.id,
+                provider="github",
+                provider_user_id=provider_user_id,
+                access_token=access_token,
+            )
+        )
+
+    await db.commit()
+
+    app_access_token = create_access_token(str(user.id))
+    raw_refresh_token = await create_refresh_token_for_user(db, user.id)
+
+    redirect = RedirectResponse(url=f"{settings.FRONTEND_URL}/gallery")
+    redirect.set_cookie("access_token", app_access_token, httponly=True, samesite="lax", max_age=900)
+    redirect.set_cookie("refresh_token", raw_refresh_token, httponly=True, samesite="lax", max_age=86400*30)
+    return redirect

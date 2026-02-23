@@ -28,3 +28,6 @@ export const logout = () => api.post('/auth/logout');
 export const loginWithGoogle = () => {
   window.location.href = `${API_BASE_URL}/auth/google`;
 };
+export const loginWithGithub = () => {
+  window.location.href = `${API_BASE_URL}/auth/github`;
+};

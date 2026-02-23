@@ -1,18 +1,20 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
-import { getAlbum, patchAlbum } from '../api/albums';
+import { useNavigate, useParams } from 'react-router-dom';
+import { deleteAlbum, getAlbum, patchAlbum } from '../api/albums';
 import Lightbox from '../components/Lightbox';
 import PhotoGrid from '../components/PhotoGrid';
 
 export default function AlbumDetail() {
   const { albumId } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
   const [nameError, setNameError] = useState('');
   const [openMenuPhotoId, setOpenMenuPhotoId] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['album-detail', albumId],
@@ -55,6 +57,16 @@ export default function AlbumDetail() {
       setOpenMenuPhotoId(null);
       queryClient.invalidateQueries({ queryKey: ['album-detail', albumId] });
       queryClient.invalidateQueries({ queryKey: ['albums'] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      await deleteAlbum(albumId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['albums'] });
+      navigate('/albums');
     },
   });
 
@@ -110,34 +122,45 @@ export default function AlbumDetail() {
 
       {!isLoading && !isError && (
         <>
-          {isEditingName ? (
-            <div className="mb-2">
-              <input
-                autoFocus
-                value={editedName}
-                onChange={(event) => {
-                  setEditedName(event.target.value);
-                  setNameError('');
-                }}
-                onBlur={saveName}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') saveName();
-                  if (event.key === 'Escape') cancelEditingName();
-                }}
-                className="w-full max-w-xl rounded-lg border border-slate-300 px-3 py-2 text-2xl font-bold text-slate-900 outline-none focus:border-slate-500"
-                maxLength={100}
-              />
-              {nameError && <p className="mt-1 text-sm text-red-600">{nameError}</p>}
+          <div className="mb-2 flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              {isEditingName ? (
+                <div>
+                  <input
+                    autoFocus
+                    value={editedName}
+                    onChange={(event) => {
+                      setEditedName(event.target.value);
+                      setNameError('');
+                    }}
+                    onBlur={saveName}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') saveName();
+                      if (event.key === 'Escape') cancelEditingName();
+                    }}
+                    className="w-full max-w-xl rounded-lg border border-slate-300 px-3 py-2 text-2xl font-bold text-slate-900 outline-none focus:border-slate-500"
+                    maxLength={100}
+                  />
+                  {nameError && <p className="mt-1 text-sm text-red-600">{nameError}</p>}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startEditingName}
+                  className="text-left text-2xl font-bold text-slate-900 hover:text-slate-700"
+                >
+                  {albumName}
+                </button>
+              )}
             </div>
-          ) : (
             <button
               type="button"
-              onClick={startEditingName}
-              className="text-left text-2xl font-bold text-slate-900 hover:text-slate-700"
+              onClick={() => setShowDeleteModal(true)}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
             >
-              {albumName}
+              Delete Album
             </button>
-          )}
+          </div>
           <p className="mb-6 mt-1 text-sm text-slate-500">{data?.photo_count || 0} photos</p>
 
           {photos.length === 0 ? (
@@ -183,6 +206,35 @@ export default function AlbumDetail() {
         onNext={onNext}
         onPrev={onPrev}
       />
+
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
+            <h2 className="text-lg font-semibold text-slate-900">Delete this album?</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Delete this album? Your photos will not be deleted.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                disabled={deleteMutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteMutation.mutate()}
+                className="rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? 'Deleting...' : 'Delete Album'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

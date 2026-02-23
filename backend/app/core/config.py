@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int
     FRONTEND_URL: str
     BACKEND_URL: str
+    R2_ACCOUNT_ID: str | None = None
+    R2_ACCESS_KEY_ID: str | None = None
+    R2_SECRET_ACCESS_KEY: str | None = None
+    R2_BUCKET_NAME: str | None = None
+    R2_REGION: str = "auto"
+    R2_ENDPOINT_URL: str | None = None
 
     class Config:
         env_file = ".env"

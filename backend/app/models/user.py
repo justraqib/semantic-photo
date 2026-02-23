@@ -16,6 +16,7 @@ class User(Base):
     oauth_accounts = relationship("OAuthAccount", back_populates="user")
     refresh_tokens = relationship("RefreshToken", back_populates="user")
     photos = relationship("Photo", back_populates="user")
+    albums = relationship("Album", cascade="all, delete-orphan")
 
 class OAuthAccount(Base):
     __tablename__ = "oauth_accounts"

@@ -317,3 +317,38 @@ async def add_photos_to_album(
 
     await db.commit()
     return {"ok": True, "inserted": inserted_count}
+
+
+@router.delete("/{album_id}/photos/{photo_id}")
+async def remove_photo_from_album(
+    album_id: str = Path(...),
+    photo_id: str = Path(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        album_uuid = UUID(album_id)
+        photo_uuid = UUID(photo_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid album or photo id") from exc
+
+    album_result = await db.execute(
+        select(Album).where(Album.id == album_uuid, Album.user_id == current_user.id)
+    )
+    album = album_result.scalar_one_or_none()
+    if album is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    link_result = await db.execute(
+        select(AlbumPhoto).where(
+            AlbumPhoto.album_id == album.id,
+            AlbumPhoto.photo_id == photo_uuid,
+        )
+    )
+    link = link_result.scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status_code=404, detail="Photo not found in album")
+
+    await db.delete(link)
+    await db.commit()
+    return {"ok": True}

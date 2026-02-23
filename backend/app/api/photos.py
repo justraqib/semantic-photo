@@ -164,6 +164,32 @@ async def list_photos(
     return {"items": items, "next_cursor": next_cursor}
 
 
+@router.get("/map")
+async def list_map_photos(
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Photo.id, Photo.gps_lat, Photo.gps_lng, Photo.thumbnail_key)
+        .where(
+            Photo.user_id == current_user.id,
+            Photo.is_deleted.is_(False),
+            Photo.gps_lat.is_not(None),
+            Photo.gps_lng.is_not(None),
+        )
+    )
+    rows = result.all()
+    return [
+        {
+            "id": str(photo_id),
+            "gps_lat": gps_lat,
+            "gps_lng": gps_lng,
+            "thumbnail_key": thumbnail_key,
+        }
+        for photo_id, gps_lat, gps_lng, thumbnail_key in rows
+    ]
+
+
 @router.get("/{photo_id}")
 async def get_photo(
     photo_id: str = Path(...),

@@ -12,9 +12,11 @@
   "dependencies": {
     "@tanstack/react-query": "^5.90.21",
     "axios": "^1.13.5",
+    "leaflet": "^1.9.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-dropzone": "^14.3.8",
+    "react-leaflet": "^5.0.0",
     "react-router-dom": "^7.13.0"
   },
   "devDependencies": {

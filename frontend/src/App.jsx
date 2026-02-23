@@ -6,6 +6,7 @@ import Albums from './pages/Albums';
 import AlbumDetail from './pages/AlbumDetail';
 import Gallery from './pages/Gallery';
 import LoginPage from './pages/LoginPage';
+import MapTest from './pages/MapTest';
 import Settings from './pages/Settings';
 
 function ProtectedRoute() {
@@ -34,6 +35,7 @@ export default function App() {
             <Route path="/gallery" element={<Gallery />} />
             <Route path="/albums" element={<Albums />} />
             <Route path="/albums/:albumId" element={<AlbumDetail />} />
+            <Route path="/map-test" element={<MapTest />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Route>

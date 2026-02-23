@@ -10,6 +10,7 @@ export default function Navbar() {
         <div className="flex items-center gap-4">
           <Link to="/gallery" className="text-lg font-bold text-slate-900">Semantic Photo</Link>
           <Link to="/gallery" className="text-sm text-slate-600 hover:text-slate-900">Gallery</Link>
+          <Link to="/albums" className="text-sm text-slate-600 hover:text-slate-900">Albums</Link>
           <Link to="/settings" className="text-sm text-slate-600 hover:text-slate-900">Settings</Link>
         </div>
 

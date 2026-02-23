@@ -1,5 +1,6 @@
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,4 +88,70 @@ async def create_album(
         "cover_photo_id": None,
         "photo_count": 0,
         "cover_thumbnail_url": None,
+    }
+
+
+@router.get("/{album_id}")
+async def get_album(
+    album_id: str = Path(...),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        album_uuid = UUID(album_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid album id") from exc
+
+    album_result = await db.execute(
+        select(Album).where(Album.id == album_uuid, Album.user_id == current_user.id)
+    )
+    album = album_result.scalar_one_or_none()
+    if album is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    count_result = await db.execute(
+        select(func.count())
+        .select_from(AlbumPhoto)
+        .where(AlbumPhoto.album_id == album.id)
+    )
+    photo_count = int(count_result.scalar_one() or 0)
+
+    photos_result = await db.execute(
+        select(
+            Photo.id,
+            Photo.thumbnail_key,
+            Photo.taken_at,
+            AlbumPhoto.position,
+        )
+        .join(AlbumPhoto, AlbumPhoto.photo_id == Photo.id)
+        .where(AlbumPhoto.album_id == album.id)
+        .order_by(AlbumPhoto.position.asc())
+        .limit(limit)
+        .offset(offset)
+    )
+    photo_rows = photos_result.mappings().all()
+
+    photos = []
+    for row in photo_rows:
+        photos.append(
+            {
+                "id": str(row["id"]),
+                "position": int(row["position"]),
+                "taken_at": row["taken_at"].isoformat() if row["taken_at"] else None,
+                "thumbnail_url": (
+                    generate_presigned_url(row["thumbnail_key"])
+                    if row["thumbnail_key"]
+                    else None
+                ),
+            }
+        )
+
+    return {
+        "id": str(album.id),
+        "name": album.name,
+        "cover_photo_id": str(album.cover_photo_id) if album.cover_photo_id else None,
+        "photo_count": photo_count,
+        "photos": photos,
     }

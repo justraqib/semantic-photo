@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_current_user
@@ -12,7 +13,7 @@ from app.models.photo import Photo
 from app.models.user import User
 from app.services.dedup import compute_phash, is_duplicate
 from app.services.exif import extract_exif
-from app.services.storage import upload_file
+from app.services.storage import generate_presigned_url, upload_file
 from app.services.thumbnail import generate_thumbnail
 
 router = APIRouter(prefix="/photos", tags=["photos"])
@@ -110,3 +111,81 @@ async def upload_photos(
 
     await db.commit()
     return {"uploaded": uploaded_count, "skipped": skipped_count}
+
+
+@router.get("")
+async def list_photos(
+    limit: int = Query(default=50, ge=1, le=200),
+    cursor: str | None = Query(default=None),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    query = (
+        select(Photo)
+        .where(Photo.user_id == current_user.id, Photo.is_deleted.is_(False))
+        .order_by(Photo.taken_at.desc().nullslast(), desc(Photo.uploaded_at))
+    )
+
+    parsed_cursor: datetime | None = None
+    if cursor:
+        try:
+            parsed_cursor = datetime.fromisoformat(cursor)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor format. Use ISO datetime.") from exc
+        query = query.where(Photo.uploaded_at < parsed_cursor)
+
+    result = await db.execute(query.limit(limit))
+    photos = result.scalars().all()
+
+    items = []
+    for photo in photos:
+        thumbnail_url = generate_presigned_url(photo.thumbnail_key) if photo.thumbnail_key else None
+        items.append(
+            {
+                "id": str(photo.id),
+                "thumbnail_key": photo.thumbnail_key,
+                "thumbnail_url": thumbnail_url,
+                "taken_at": photo.taken_at.isoformat() if photo.taken_at else None,
+                "uploaded_at": photo.uploaded_at.isoformat() if photo.uploaded_at else None,
+            }
+        )
+
+    next_cursor = None
+    if photos and len(photos) == limit and photos[-1].uploaded_at:
+        next_cursor = photos[-1].uploaded_at.isoformat()
+
+    return {"items": items, "next_cursor": next_cursor}
+
+
+@router.get("/{photo_id}")
+async def get_photo(
+    photo_id: str = Path(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        photo_uuid = UUID(photo_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid photo id") from exc
+
+    result = await db.execute(
+        select(Photo).where(
+            Photo.id == photo_uuid,
+            Photo.user_id == current_user.id,
+            Photo.is_deleted.is_(False),
+        )
+    )
+    photo = result.scalar_one_or_none()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    full_url = generate_presigned_url(photo.storage_key)
+
+    return {
+        "id": str(photo.id),
+        "storage_key": photo.storage_key,
+        "url": full_url,
+        "mime_type": photo.mime_type,
+        "taken_at": photo.taken_at.isoformat() if photo.taken_at else None,
+        "uploaded_at": photo.uploaded_at.isoformat() if photo.uploaded_at else None,
+    }

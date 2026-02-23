@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { createAlbum } from '../api/albums';
 import AlbumCard from '../components/AlbumCard';
 import { useAlbums } from '../hooks/useAlbums';
 
@@ -12,7 +15,40 @@ function AlbumsEmptyState() {
 }
 
 export default function Albums() {
+  const queryClient = useQueryClient();
   const { albums, isLoading, isError } = useAlbums();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+
+  const createMutation = useMutation({
+    mutationFn: async (albumName) => {
+      const response = await createAlbum({ name: albumName });
+      return response.data;
+    },
+    onSuccess: () => {
+      setName('');
+      setError('');
+      setIsModalOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['albums'] });
+    },
+    onError: (mutationError) => {
+      setError(mutationError?.response?.data?.detail || 'Failed to create album');
+    },
+  });
+
+  const onCreate = () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError('Album name is required');
+      return;
+    }
+    if (trimmed.length > 100) {
+      setError('Album name must be 100 characters or fewer');
+      return;
+    }
+    createMutation.mutate(trimmed);
+  };
 
   return (
     <div className="mx-auto max-w-[1600px] p-4 md:p-8">
@@ -21,6 +57,13 @@ export default function Albums() {
           <h1 className="text-2xl font-bold text-slate-900">Albums</h1>
           <p className="mt-1 text-sm text-slate-500">Group your photos into collections.</p>
         </div>
+        <button
+          type="button"
+          onClick={() => setIsModalOpen(true)}
+          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+        >
+          + New Album
+        </button>
       </div>
 
       {isLoading && (
@@ -44,6 +87,59 @@ export default function Albums() {
           {albums.map((album) => (
             <AlbumCard key={album.id} album={album} />
           ))}
+        </div>
+      )}
+
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
+            <h2 className="text-lg font-semibold text-slate-900">Create Album</h2>
+            <p className="mt-1 text-sm text-slate-500">Name your album.</p>
+            <input
+              autoFocus
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                setError('');
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  setIsModalOpen(false);
+                  setError('');
+                  setName('');
+                }
+                if (event.key === 'Enter') {
+                  onCreate();
+                }
+              }}
+              className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+              placeholder="Album name"
+              maxLength={100}
+            />
+            {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsModalOpen(false);
+                  setError('');
+                  setName('');
+                }}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                disabled={createMutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onCreate}
+                className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+                disabled={createMutation.isPending}
+              >
+                {createMutation.isPending ? 'Creating...' : 'Create'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

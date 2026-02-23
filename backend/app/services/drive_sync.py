@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.drive import DriveSyncState
+from app.models.photo import Photo
 from app.models.user import OAuthAccount
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -80,6 +81,34 @@ async def sync_user(user_id, db: AsyncSession) -> None:
 
     changes = payload.get("changes", [])
     print(f"Drive sync for user {user_id}: received {len(changes)} changes")
+
+    filtered_changes: list[dict] = []
+    for change in changes:
+        file_data = change.get("file") or {}
+        if change.get("removed") is True:
+            continue
+        if file_data.get("trashed") is True:
+            continue
+        mime_type = file_data.get("mimeType") or ""
+        if not mime_type.startswith("image/"):
+            continue
+        source_id = file_data.get("id") or change.get("fileId")
+        if not source_id:
+            continue
+
+        existing_photo_result = await db.execute(
+            select(Photo.id).where(
+                Photo.user_id == user_id,
+                Photo.source == "google_drive",
+                Photo.source_id == source_id,
+            )
+        )
+        if existing_photo_result.scalar_one_or_none():
+            continue
+
+        filtered_changes.append(change)
+
+    print(f"Drive sync for user {user_id}: {len(filtered_changes)} changes passed filtering")
 
     state.next_page_token = payload.get("nextPageToken") or payload.get("newStartPageToken") or state.next_page_token
     await db.commit()

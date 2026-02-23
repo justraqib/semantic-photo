@@ -10,3 +10,4 @@ alembic
 boto3
 Pillow
 exifread
+imagehash

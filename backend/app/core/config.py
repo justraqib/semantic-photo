@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     R2_BUCKET_NAME: str | None = None
     R2_REGION: str = "auto"
     R2_ENDPOINT_URL: str | None = None
+    CLIP_SERVICE_URL: str | None = None
+    REDIS_URL: str | None = None
 
     class Config:
         env_file = ".env"

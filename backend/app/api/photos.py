@@ -185,6 +185,7 @@ async def list_map_photos(
             "gps_lat": gps_lat,
             "gps_lng": gps_lng,
             "thumbnail_key": thumbnail_key,
+            "thumbnail_url": generate_presigned_url(thumbnail_key) if thumbnail_key else None,
         }
         for photo_id, gps_lat, gps_lng, thumbnail_key in rows
     ]

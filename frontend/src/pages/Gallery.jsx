@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import EmptyState from '../components/EmptyState';
 import Lightbox from '../components/Lightbox';
 import PhotoGrid from '../components/PhotoGrid';
+import SearchEmptyState from '../components/SearchEmptyState';
 import SearchBar from '../components/SearchBar';
 import SearchResults from '../components/SearchResults';
 import UploadModal from '../components/UploadModal';
@@ -81,7 +82,14 @@ export default function Gallery() {
       )}
 
       {isSearchActive && (
-        <SearchResults results={searchResults} onPhotoClick={setSelectedPhoto} />
+        <>
+          {!isSearching && searchResults.length === 0 && (
+            <SearchEmptyState query={query} onClear={() => setQuery('')} />
+          )}
+          {searchResults.length > 0 && (
+            <SearchResults results={searchResults} onPhotoClick={setSelectedPhoto} />
+          )}
+        </>
       )}
 
       {!isSearchActive && <div ref={sentinelRef} className="h-8" />}

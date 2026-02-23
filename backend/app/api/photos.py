@@ -189,3 +189,28 @@ async def get_photo(
         "taken_at": photo.taken_at.isoformat() if photo.taken_at else None,
         "uploaded_at": photo.uploaded_at.isoformat() if photo.uploaded_at else None,
     }
+
+
+@router.delete("/{photo_id}")
+async def delete_photo(
+    photo_id: str = Path(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        photo_uuid = UUID(photo_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid photo id") from exc
+
+    result = await db.execute(select(Photo).where(Photo.id == photo_uuid))
+    photo = result.scalar_one_or_none()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    if photo.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    photo.is_deleted = True
+    await db.commit()
+
+    return {"message": "Photo soft-deleted"}

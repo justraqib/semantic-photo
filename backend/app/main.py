@@ -8,6 +8,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from app.api.albums import router as albums_router
 from app.api.auth import router as auth_router
+from app.api.memories import router as memories_router
 from app.api.photos import router as photos_router
 from app.api.search import router as search_router
 from app.api.sync import router as sync_router
@@ -35,6 +36,7 @@ app.include_router(photos_router)
 app.include_router(search_router)
 app.include_router(albums_router)
 app.include_router(sync_router)
+app.include_router(memories_router)
 
 
 @app.on_event("startup")

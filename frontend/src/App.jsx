@@ -3,6 +3,7 @@ import Navbar from './components/Navbar';
 import { useAuth } from './hooks/useAuth';
 import AuthSuccess from './pages/AuthSuccess';
 import Albums from './pages/Albums';
+import AlbumDetail from './pages/AlbumDetail';
 import Gallery from './pages/Gallery';
 import LoginPage from './pages/LoginPage';
 import Settings from './pages/Settings';
@@ -32,6 +33,7 @@ export default function App() {
           <Route element={<ProtectedLayout />}>
             <Route path="/gallery" element={<Gallery />} />
             <Route path="/albums" element={<Albums />} />
+            <Route path="/albums/:albumId" element={<AlbumDetail />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Route>

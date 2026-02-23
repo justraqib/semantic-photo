@@ -4,6 +4,7 @@ import { useAuth } from './hooks/useAuth';
 import AuthSuccess from './pages/AuthSuccess';
 import Gallery from './pages/Gallery';
 import LoginPage from './pages/LoginPage';
+import Settings from './pages/Settings';
 
 function ProtectedRoute() {
   const { isLoggedIn, isLoading } = useAuth();
@@ -29,6 +30,7 @@ export default function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<ProtectedLayout />}>
             <Route path="/gallery" element={<Gallery />} />
+            <Route path="/settings" element={<Settings />} />
           </Route>
         </Route>
         <Route path="/" element={<Navigate to="/gallery" replace />} />

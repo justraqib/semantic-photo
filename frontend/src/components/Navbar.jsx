@@ -1,4 +1,5 @@
 import { useAuth } from '../hooks/useAuth';
+import { Link } from 'react-router-dom';
 
 export default function Navbar() {
   const { user } = useAuth();
@@ -6,7 +7,11 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
       <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3 md:px-8">
-        <div className="text-lg font-bold text-slate-900">Semantic Photo</div>
+        <div className="flex items-center gap-4">
+          <Link to="/gallery" className="text-lg font-bold text-slate-900">Semantic Photo</Link>
+          <Link to="/gallery" className="text-sm text-slate-600 hover:text-slate-900">Gallery</Link>
+          <Link to="/settings" className="text-sm text-slate-600 hover:text-slate-900">Settings</Link>
+        </div>
 
         <div className="flex items-center gap-3">
           {user?.avatar_url ? (

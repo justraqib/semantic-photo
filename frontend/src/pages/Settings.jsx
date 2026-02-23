@@ -1,0 +1,86 @@
+import { useEffect, useRef, useState } from 'react';
+import { selectDriveFolder } from '../api/sync';
+
+const GOOGLE_API_SCRIPT_ID = 'google-api-script';
+
+function loadGoogleApiScript() {
+  if (document.getElementById(GOOGLE_API_SCRIPT_ID)) return;
+  const script = document.createElement('script');
+  script.id = GOOGLE_API_SCRIPT_ID;
+  script.src = 'https://apis.google.com/js/api.js';
+  script.async = true;
+  script.defer = true;
+  document.body.appendChild(script);
+}
+
+export default function Settings() {
+  const [status, setStatus] = useState('');
+  const tokenRef = useRef(null);
+
+  useEffect(() => {
+    loadGoogleApiScript();
+    const interval = setInterval(() => {
+      if (window.gapi?.load && !tokenRef.current) {
+        window.gapi.load('picker', () => {
+          tokenRef.current = true;
+          setStatus('Google Picker loaded');
+        });
+      }
+    }, 300);
+    return () => clearInterval(interval);
+  }, []);
+
+  const openPicker = () => {
+    const gapi = window.gapi;
+    const google = window.google;
+    const oauthToken = window.localStorage.getItem('google_access_token');
+    const developerKey = import.meta.env.VITE_GOOGLE_API_KEY;
+
+    if (!gapi?.picker || !google?.picker || !oauthToken || !developerKey) {
+      setStatus('Picker requires gapi + oauth token + VITE_GOOGLE_API_KEY');
+      return;
+    }
+
+    const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+      .setIncludeFolders(true)
+      .setSelectFolderEnabled(true);
+
+    const picker = new google.picker.PickerBuilder()
+      .setDeveloperKey(developerKey)
+      .setOAuthToken(oauthToken)
+      .setTitle('Choose Google Drive Folder')
+      .addView(view)
+      .setCallback(async (data) => {
+        if (data.action !== google.picker.Action.PICKED) return;
+        const doc = data.docs?.[0];
+        if (!doc) return;
+        try {
+          await selectDriveFolder({ folder_id: doc.id, folder_name: doc.name || 'Google Drive Folder' });
+          setStatus(`Folder selected: ${doc.name || doc.id}`);
+        } catch {
+          setStatus('Failed to save selected folder');
+        }
+      })
+      .build();
+
+    picker.setVisible(true);
+  };
+
+  return (
+    <div className="mx-auto max-w-[900px] p-4 md:p-8">
+      <h1 className="mb-4 text-2xl font-semibold text-slate-900">Settings</h1>
+      <div className="rounded-xl border border-slate-200 bg-white p-5">
+        <h2 className="mb-2 text-lg font-medium text-slate-800">Google Drive Sync</h2>
+        <p className="mb-4 text-sm text-slate-600">Choose Folder to connect your Drive photos.</p>
+        <button
+          type="button"
+          onClick={openPicker}
+          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+        >
+          Choose Folder
+        </button>
+        {status && <p className="mt-3 text-sm text-slate-600">{status}</p>}
+      </div>
+    </div>
+  );
+}

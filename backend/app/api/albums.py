@@ -18,6 +18,11 @@ class CreateAlbumPayload(BaseModel):
     name: str
 
 
+class UpdateAlbumPayload(BaseModel):
+    name: str | None = None
+    cover_photo_id: str | None = None
+
+
 @router.get("")
 async def list_albums(
     current_user: User = Depends(require_current_user),
@@ -154,4 +159,74 @@ async def get_album(
         "cover_photo_id": str(album.cover_photo_id) if album.cover_photo_id else None,
         "photo_count": photo_count,
         "photos": photos,
+    }
+
+
+@router.patch("/{album_id}")
+async def update_album(
+    payload: UpdateAlbumPayload,
+    album_id: str = Path(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        album_uuid = UUID(album_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid album id") from exc
+
+    album_result = await db.execute(
+        select(Album).where(Album.id == album_uuid, Album.user_id == current_user.id)
+    )
+    album = album_result.scalar_one_or_none()
+    if album is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Album name is required")
+        if len(name) > 100:
+            raise HTTPException(status_code=400, detail="Album name must be 100 characters or fewer")
+        album.name = name
+
+    if payload.cover_photo_id is not None:
+        try:
+            cover_photo_uuid = UUID(payload.cover_photo_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid cover_photo_id") from exc
+
+        photo_result = await db.execute(
+            select(Photo).where(Photo.id == cover_photo_uuid, Photo.user_id == current_user.id)
+        )
+        photo = photo_result.scalar_one_or_none()
+        if photo is None:
+            raise HTTPException(status_code=400, detail="Cover photo must belong to current user")
+
+        in_album_result = await db.execute(
+            select(AlbumPhoto).where(
+                AlbumPhoto.album_id == album.id,
+                AlbumPhoto.photo_id == cover_photo_uuid,
+            )
+        )
+        in_album = in_album_result.scalar_one_or_none()
+        if in_album is None:
+            raise HTTPException(status_code=400, detail="Cover photo must be part of the album")
+
+        album.cover_photo_id = cover_photo_uuid
+
+    await db.commit()
+    await db.refresh(album)
+
+    cover_thumbnail_url = None
+    if album.cover_photo_id:
+        cover_result = await db.execute(select(Photo.thumbnail_key).where(Photo.id == album.cover_photo_id))
+        cover_key = cover_result.scalar_one_or_none()
+        if cover_key:
+            cover_thumbnail_url = generate_presigned_url(cover_key)
+
+    return {
+        "id": str(album.id),
+        "name": album.name,
+        "cover_photo_id": str(album.cover_photo_id) if album.cover_photo_id else None,
+        "cover_thumbnail_url": cover_thumbnail_url,
     }

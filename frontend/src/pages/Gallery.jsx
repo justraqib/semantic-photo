@@ -3,8 +3,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import EmptyState from '../components/EmptyState';
 import Lightbox from '../components/Lightbox';
 import PhotoGrid from '../components/PhotoGrid';
+import SearchBar from '../components/SearchBar';
 import UploadModal from '../components/UploadModal';
 import { usePhotos } from '../hooks/usePhotos';
+import { useSearch } from '../hooks/useSearch';
 
 function SkeletonGrid() {
   return (
@@ -19,6 +21,8 @@ function SkeletonGrid() {
 export default function Gallery() {
   const queryClient = useQueryClient();
   const { photos, fetchNextPage, hasNextPage, isLoading } = usePhotos();
+  const [query, setQuery] = useState('');
+  const { isLoading: isSearching } = useSearch(query);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const sentinelRef = useRef(null);
@@ -58,6 +62,12 @@ export default function Gallery() {
 
   return (
     <div className="mx-auto max-w-[1600px] p-4 md:p-8">
+      <SearchBar
+        onSearch={setQuery}
+        onClear={() => setQuery('')}
+        isSearching={isSearching}
+      />
+
       {isLoading && photos.length === 0 && <SkeletonGrid />}
 
       {!isLoading && photos.length === 0 && (

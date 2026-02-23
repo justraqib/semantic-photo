@@ -7,6 +7,7 @@ import SearchEmptyState from '../components/SearchEmptyState';
 import SearchBar from '../components/SearchBar';
 import SearchResults from '../components/SearchResults';
 import UploadModal from '../components/UploadModal';
+import { useMemories } from '../hooks/useMemories';
 import { usePhotos } from '../hooks/usePhotos';
 import { useSearch } from '../hooks/useSearch';
 
@@ -27,7 +28,10 @@ export default function Gallery() {
   const { results: searchResults, isLoading: isSearching, isError: isSearchError } = useSearch(query);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isMemoryExpanded, setIsMemoryExpanded] = useState(false);
+  const [isMemoryDismissed, setIsMemoryDismissed] = useState(false);
   const sentinelRef = useRef(null);
+  const { memory } = useMemories();
   const isSearchActive = query.trim().length >= 2;
   const clearSearch = () => setQuery('');
 
@@ -66,6 +70,52 @@ export default function Gallery() {
 
   return (
     <div className="mx-auto max-w-[1600px] p-4 md:p-8">
+      {!isMemoryDismissed && memory && (
+        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setIsMemoryExpanded((prev) => !prev)}
+              className="text-left"
+            >
+              <p className="text-sm font-semibold text-emerald-900">
+                📅 {memory.label} today — {memory.photo_count} photos
+              </p>
+              <p className="mt-1 text-xs text-emerald-700">
+                Tap to {isMemoryExpanded ? 'collapse' : 'expand'}
+              </p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsMemoryDismissed(true)}
+              className="rounded px-2 py-1 text-sm text-emerald-700 hover:bg-emerald-100"
+              aria-label="Dismiss memories banner"
+            >
+              ×
+            </button>
+          </div>
+
+          {isMemoryExpanded && (
+            <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+              {memory.photos.map((photo) => (
+                <button
+                  key={photo.id}
+                  type="button"
+                  onClick={() => setSelectedPhoto(photo)}
+                  className="shrink-0 overflow-hidden rounded-lg border border-emerald-200 bg-white"
+                >
+                  <img
+                    src={photo.thumbnail_url}
+                    alt="Memory"
+                    className="h-24 w-24 object-cover md:h-28 md:w-28"
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <SearchBar
         onSearch={setQuery}
         onClear={clearSearch}

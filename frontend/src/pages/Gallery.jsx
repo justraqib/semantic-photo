@@ -100,6 +100,7 @@ export default function Gallery() {
 
       {isSearchActive && (
         <>
+          {isSearching && <SkeletonGrid />}
           {!isSearching && searchResults.length === 0 && (
             <SearchEmptyState query={query} onClear={clearSearch} />
           )}

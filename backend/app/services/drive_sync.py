@@ -58,14 +58,20 @@ async def sync_user(user_id, db: AsyncSession) -> None:
     if oauth_account is None or not oauth_account.refresh_token:
         raise RuntimeError("Google refresh token not found for user")
 
-    access_token = await refresh_access_token(oauth_account.refresh_token)
-
     state_result = await db.execute(select(DriveSyncState).where(DriveSyncState.user_id == user_id))
     state = state_result.scalar_one_or_none()
     if state is None:
         state = DriveSyncState(user_id=user_id, sync_enabled=True)
         db.add(state)
         await db.flush()
+
+    try:
+        access_token = await refresh_access_token(oauth_account.refresh_token)
+    except Exception:
+        state.sync_enabled = False
+        state.last_error = "Google account disconnected. Please reconnect."
+        await db.commit()
+        return
 
     headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -189,6 +195,7 @@ async def sync_user(user_id, db: AsyncSession) -> None:
                 continue
 
     state.next_page_token = payload.get("nextPageToken") or payload.get("newStartPageToken") or state.next_page_token
+    state.last_error = None
     await db.commit()
 
 

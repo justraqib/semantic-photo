@@ -24,7 +24,7 @@ export default function Gallery() {
   const queryClient = useQueryClient();
   const { photos, fetchNextPage, hasNextPage, isLoading } = usePhotos();
   const [query, setQuery] = useState('');
-  const { results: searchResults, isLoading: isSearching } = useSearch(query);
+  const { results: searchResults, isLoading: isSearching, isError: isSearchError } = useSearch(query);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const sentinelRef = useRef(null);
@@ -94,23 +94,28 @@ export default function Gallery() {
         <EmptyState message="Upload your first photo to get started" />
       )}
 
-      {!isSearchActive && photos.length > 0 && (
+      {(!isSearchActive || isSearchError) && photos.length > 0 && (
         <PhotoGrid photos={photos} onPhotoClick={setSelectedPhoto} />
       )}
 
       {isSearchActive && (
         <>
-          {isSearching && <SkeletonGrid />}
-          {!isSearching && searchResults.length === 0 && (
+          {isSearchError && (
+            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
+              Search is temporarily unavailable. Try again in a moment.
+            </div>
+          )}
+          {!isSearchError && isSearching && <SkeletonGrid />}
+          {!isSearchError && !isSearching && searchResults.length === 0 && (
             <SearchEmptyState query={query} onClear={clearSearch} />
           )}
-          {searchResults.length > 0 && (
+          {!isSearchError && searchResults.length > 0 && (
             <SearchResults results={searchResults} onPhotoClick={setSelectedPhoto} />
           )}
         </>
       )}
 
-      {!isSearchActive && <div ref={sentinelRef} className="h-8" />}
+      {(!isSearchActive || isSearchError) && <div ref={sentinelRef} className="h-8" />}
 
       <button
         type="button"

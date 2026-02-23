@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_current_user
 from app.core.database import get_db
+from app.jobs.queue import push_embedding_job
 from app.models.photo import Photo
 from app.models.user import User
 from app.services.dedup import compute_phash, is_duplicate
@@ -44,6 +45,7 @@ async def upload_photos(
     uploaded_count = 0
     skipped_count = 0
     user_id = str(current_user.id)
+    queued_photo_ids: list[str] = []
 
     for file in files:
         if not file.content_type or not file.content_type.startswith("image/"):
@@ -107,9 +109,14 @@ async def upload_photos(
             is_deleted=False,
         )
         db.add(photo)
+        queued_photo_ids.append(str(photo.id))
         uploaded_count += 1
 
     await db.commit()
+
+    for photo_id in queued_photo_ids:
+        push_embedding_job(photo_id)
+
     return {"uploaded": uploaded_count, "skipped": skipped_count}
 
 

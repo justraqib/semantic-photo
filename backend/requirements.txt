@@ -12,3 +12,4 @@ Pillow
 exifread
 imagehash
 redis
+python-multipart

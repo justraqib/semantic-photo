@@ -7,13 +7,29 @@ from app.core.database import get_db
 from app.core.security import create_access_token, decode_access_token, hash_token
 from app.services.auth_service import get_or_create_user, create_refresh_token_for_user, get_current_user
 from sqlalchemy import select
-from app.models.user import RefreshToken
+from app.models.user import RefreshToken, User
 from datetime import datetime, timezone
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
+
+async def require_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    user = await get_current_user(db, payload["sub"])
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return user
 
 @router.get("/google")
 @router.get("/google/login")
@@ -96,14 +112,5 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
     return {"message": "Logged out"}
 
 @router.get("/me")
-async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
-    token = request.cookies.get("access_token")
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    payload = decode_access_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    user = await get_current_user(db, payload["sub"])
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+async def get_me(user: User = Depends(require_current_user)):
     return {"id": str(user.id), "email": user.email, "display_name": user.display_name, "avatar_url": user.avatar_url}

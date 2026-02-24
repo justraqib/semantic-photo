@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   connectDriveSync,
   disconnectDriveSync,
+  getPickerToken,
   getSyncStatus,
   selectDriveFolder,
   triggerSync,
@@ -65,14 +66,21 @@ export default function Settings() {
     return () => clearInterval(poll);
   }, []);
 
-  const openPicker = () => {
+  const openPicker = async () => {
     const gapi = window.gapi;
     const google = window.google;
-    const oauthToken = window.localStorage.getItem('google_access_token');
     const developerKey = import.meta.env.VITE_GOOGLE_API_KEY;
+    let oauthToken = null;
+
+    try {
+      const tokenResponse = await getPickerToken();
+      oauthToken = tokenResponse.data?.access_token || null;
+    } catch {
+      oauthToken = null;
+    }
 
     if (!gapi?.picker || !google?.picker || !oauthToken || !developerKey) {
-      setStatus('Picker requires gapi + oauth token + VITE_GOOGLE_API_KEY');
+      setStatus('Picker requires Google OAuth login and VITE_GOOGLE_API_KEY in frontend env.');
       return;
     }
 

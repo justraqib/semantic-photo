@@ -9,7 +9,7 @@ from app.api.auth import require_current_user
 from app.core.database import get_db
 from app.models.drive import DriveSyncState
 from app.models.user import OAuthAccount, User
-from app.services.drive_sync import sync_user
+from app.services.drive_sync import refresh_access_token, sync_user
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -17,6 +17,31 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 class SyncFolderPayload(BaseModel):
     folder_id: str
     folder_name: str
+
+
+@router.get("/picker-token")
+async def get_picker_token(
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    oauth_result = await db.execute(
+        select(OAuthAccount).where(
+            OAuthAccount.user_id == current_user.id,
+            OAuthAccount.provider == "google",
+        )
+    )
+    oauth_account = oauth_result.scalar_one_or_none()
+    if oauth_account is None or not oauth_account.refresh_token:
+        return {"access_token": None}
+
+    try:
+        access_token = await refresh_access_token(oauth_account.refresh_token)
+    except Exception:
+        return {"access_token": None}
+
+    oauth_account.access_token = access_token
+    await db.commit()
+    return {"access_token": access_token}
 
 
 @router.post("/folder")

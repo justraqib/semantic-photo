@@ -6,6 +6,7 @@ import {
   selectDriveFolder,
   triggerSync,
 } from '../api/sync';
+import { exportPhotosArchive } from '../api/photos';
 
 const GOOGLE_API_SCRIPT_ID = 'google-api-script';
 
@@ -31,6 +32,7 @@ export default function Settings() {
   });
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [runningSync, setRunningSync] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const tokenRef = useRef(null);
 
   const loadStatus = async () => {
@@ -117,6 +119,27 @@ export default function Settings() {
     setStatus('Drive sync disconnected');
   };
 
+  const handleExportArchive = async () => {
+    try {
+      setIsExporting(true);
+      const response = await exportPhotosArchive();
+      const blob = new Blob([response.data], { type: 'application/zip' });
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'photo-export.zip';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+      setStatus('Archive download started');
+    } catch {
+      setStatus('Failed to export archive');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-[900px] p-4 md:p-8">
       <h1 className="mb-4 text-2xl font-semibold text-slate-900">Settings</h1>
@@ -169,6 +192,19 @@ export default function Settings() {
           </div>
         )}
         {status && <p className="mt-3 text-sm text-slate-600">{status}</p>}
+      </div>
+
+      <div className="mt-4 rounded-xl border border-slate-200 bg-white p-5">
+        <h2 className="mb-2 text-lg font-medium text-slate-800">Storage</h2>
+        <p className="mb-4 text-sm text-slate-600">Download all your photos and metadata as a ZIP archive.</p>
+        <button
+          type="button"
+          onClick={handleExportArchive}
+          disabled={isExporting}
+          className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+        >
+          {isExporting ? 'Preparing export...' : 'Export My Archive'}
+        </button>
       </div>
     </div>
   );

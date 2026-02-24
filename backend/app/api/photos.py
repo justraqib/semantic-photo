@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import io
+import json
+import zipfile
 from datetime import datetime
+from pathlib import Path as FilePath
 from uuid import UUID, uuid4
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +20,7 @@ from app.models.photo import Photo
 from app.models.user import User
 from app.services.dedup import compute_phash, is_duplicate
 from app.services.exif import extract_exif
-from app.services.storage import delete_file, generate_presigned_url, upload_file
+from app.services.storage import delete_file, generate_presigned_url, get_file, upload_file
 from app.services.thumbnail import generate_thumbnail
 
 router = APIRouter(prefix="/photos", tags=["photos"])
@@ -253,6 +258,60 @@ async def list_trashed_photos(
         next_cursor = photos[-1].uploaded_at.isoformat()
 
     return {"items": items, "next_cursor": next_cursor}
+
+
+@router.get("/export")
+async def export_photos_archive(
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Photo).where(Photo.user_id == current_user.id, Photo.is_deleted.is_(False)).order_by(Photo.uploaded_at.asc())
+    )
+    photos = result.scalars().all()
+
+    zip_buffer = io.BytesIO()
+    metadata = []
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for photo in photos:
+            if not photo.storage_key:
+                continue
+
+            try:
+                file_bytes = get_file(photo.storage_key)
+            except Exception:
+                continue
+
+            file_ext = FilePath(photo.original_filename or "").suffix or ".jpg"
+            archive_name = f"photos/{photo.id}{file_ext}"
+            zip_file.writestr(archive_name, file_bytes)
+
+            metadata.append(
+                {
+                    "id": str(photo.id),
+                    "original_filename": photo.original_filename,
+                    "storage_key": photo.storage_key,
+                    "thumbnail_key": photo.thumbnail_key,
+                    "taken_at": photo.taken_at.isoformat() if photo.taken_at else None,
+                    "uploaded_at": photo.uploaded_at.isoformat() if photo.uploaded_at else None,
+                    "gps_lat": photo.gps_lat,
+                    "gps_lng": photo.gps_lng,
+                    "camera_make": photo.camera_make,
+                    "source": photo.source,
+                    "source_id": photo.source_id,
+                }
+            )
+
+        zip_file.writestr("metadata/photos.json", json.dumps(metadata, ensure_ascii=True, indent=2))
+
+    zip_buffer.seek(0)
+    filename = f"photo-export-{current_user.id}.zip"
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/{photo_id}/restore")

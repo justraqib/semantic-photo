@@ -38,9 +38,7 @@ export default function Gallery() {
   const isSearchActive = query.trim().length >= 2;
   const clearSearch = () => setQuery('');
   const pendingEmbeddings = embeddingStatus?.pending_for_user || 0;
-  const readyEmbeddings = embeddingStatus?.ready_for_user || 0;
-  const totalEmbeddings = embeddingStatus?.total_for_user || (pendingEmbeddings + readyEmbeddings);
-  const progressPercent = embeddingStatus?.progress_percent ?? (totalEmbeddings ? Math.round((readyEmbeddings / totalEmbeddings) * 100) : 100);
+  const progressPercent = embeddingStatus?.progress_percent ?? 0;
   const etaSeconds = embeddingStatus?.eta_seconds || 0;
   const etaMinutes = Math.max(1, Math.ceil(etaSeconds / 60));
   const queueLength = embeddingStatus?.queue_length || 0;
@@ -139,14 +137,12 @@ export default function Gallery() {
         isSearching={isSearching}
       />
 
-      {totalEmbeddings > 0 && (
+      {pendingEmbeddings > 0 && (
         <div className="mb-4 rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 via-sky-50 to-indigo-50 p-4">
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-slate-800">
-              <span className={`h-2.5 w-2.5 rounded-full ${pendingEmbeddings > 0 ? 'animate-pulse bg-cyan-500' : 'bg-emerald-500'}`} />
-              <p className="text-sm font-semibold">
-                {pendingEmbeddings > 0 ? 'AI indexing in progress' : 'AI indexing complete'}
-              </p>
+              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-cyan-500" />
+              <p className="text-sm font-semibold">AI indexing in progress</p>
             </div>
             <button
               type="button"
@@ -166,8 +162,7 @@ export default function Gallery() {
           </div>
 
           <p className="text-xs text-slate-700">
-            {progressPercent}% complete ({readyEmbeddings}/{totalEmbeddings}) • {pendingEmbeddings} pending • Queue {queueLength}
-            {pendingEmbeddings > 0 ? ` • ETA ~${etaMinutes} min` : ''}
+            {pendingEmbeddings} photo{pendingEmbeddings > 1 ? 's' : ''} not embedded yet • Queue {queueLength} • ETA ~{etaMinutes} min
           </p>
         </div>
       )}

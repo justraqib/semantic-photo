@@ -22,13 +22,16 @@ def _get_redis_client() -> Redis | None:
     return _redis_client
 
 
-def push_embedding_job(photo_id: str) -> None:
+def push_embedding_job(photo_id: str, prioritize: bool = False) -> None:
     client = _get_redis_client()
     if client is None:
         return
 
     try:
-        client.rpush(_QUEUE_NAME, photo_id)
+        if prioritize:
+            client.lpush(_QUEUE_NAME, photo_id)
+        else:
+            client.rpush(_QUEUE_NAME, photo_id)
     except RedisError:
         return
 

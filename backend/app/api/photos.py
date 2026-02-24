@@ -253,7 +253,7 @@ async def start_embedding_for_pending(
     )
     photo_ids = [str(photo_id) for (photo_id,) in result.all()]
     for photo_id in photo_ids:
-        push_embedding_job(photo_id)
+        push_embedding_job(photo_id, prioritize=True)
 
     return {
         "queued": len(photo_ids),

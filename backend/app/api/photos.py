@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,6 +93,22 @@ async def upload_photos(
             raise HTTPException(
                 status_code=503,
                 detail=f"Upload storage is not configured: {exc}",
+            ) from exc
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code", "UnknownError")
+            if error_code == "AccessDenied":
+                raise HTTPException(
+                    status_code=503,
+                    detail="Upload storage access denied. Check Cloudflare R2 token permissions and bucket name.",
+                ) from exc
+            raise HTTPException(
+                status_code=503,
+                detail=f"Upload to storage failed: {error_code}",
+            ) from exc
+        except BotoCoreError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Upload to storage failed: {exc.__class__.__name__}",
             ) from exc
 
         photo = Photo(

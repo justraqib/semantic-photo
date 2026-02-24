@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { Link } from 'react-router-dom';
 
 export default function Navbar() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { data: mapPhotos } = useQuery({
     queryKey: ['map-photos-nav'],
     queryFn: async () => {
@@ -37,6 +37,13 @@ export default function Navbar() {
             </div>
           )}
           <span className="text-sm font-medium text-slate-700">{user?.display_name || user?.email || 'User'}</span>
+          <button
+            type="button"
+            onClick={logout}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+          >
+            Logout
+          </button>
         </div>
       </div>
     </header>

@@ -4,6 +4,7 @@ from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey,
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from pgvector.sqlalchemy import Vector
 
 from app.core.database import Base
 
@@ -25,7 +26,7 @@ class Photo(Base):
     source = Column(String, nullable=True)
     source_id = Column(String, nullable=True)
     phash = Column(String, nullable=True)
-    embedding = Column(Text, nullable=True)
+    embedding = Column(Vector(512), nullable=True)
     embedding_generated_at = Column(DateTime(timezone=True), nullable=True)
     caption = Column(Text, nullable=True)
     gps_lat = Column(Float, nullable=True)

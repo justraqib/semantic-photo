@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import date, datetime, timezone
 from uuid import UUID
 
@@ -47,7 +46,7 @@ async def run_embedding_worker() -> None:
                 await asyncio.sleep(60)
                 continue
 
-            photo.embedding = json.dumps(embedding)
+            photo.embedding = embedding
             photo.embedding_generated_at = datetime.now(timezone.utc)
             await db.commit()
             print(f"Embedded photo {photo.id} successfully")

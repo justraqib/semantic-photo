@@ -5,11 +5,13 @@ import { uploadPhotos } from '../api/photos';
 export default function UploadModal({ isOpen, onClose, onUploaded }) {
   const [progress, setProgress] = useState({});
   const [summary, setSummary] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
 
   const reset = useCallback(() => {
     setProgress({});
     setSummary(null);
+    setErrorMessage('');
     setIsUploading(false);
   }, []);
 
@@ -21,8 +23,10 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
     if (!files?.length) return;
 
     setIsUploading(true);
+    setErrorMessage('');
     let uploaded = 0;
     let skipped = 0;
+    let failed = 0;
 
     for (const file of files) {
       const formData = new FormData();
@@ -36,18 +40,22 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
 
         uploaded += response.data?.uploaded ?? 0;
         skipped += response.data?.skipped ?? 0;
-      } catch {
+      } catch (error) {
+        failed += 1;
         setProgress((prev) => ({ ...prev, [file.name]: 0 }));
+        setErrorMessage(error?.response?.data?.detail || 'Upload failed. Please try again.');
       }
     }
 
-    setSummary({ uploaded, skipped });
+    setSummary({ uploaded, skipped, failed });
     setIsUploading(false);
-    onUploaded?.();
+    if (uploaded > 0) onUploaded?.();
 
-    setTimeout(() => {
-      onClose?.();
-    }, 3000);
+    if (failed === 0) {
+      setTimeout(() => {
+        onClose?.();
+      }, 3000);
+    }
   }, [onClose, onUploaded]);
 
   const onDrop = useCallback((acceptedFiles) => {
@@ -97,7 +105,13 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
 
         {summary && (
           <p className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            {summary.uploaded} uploaded, {summary.skipped} duplicate skipped
+            {summary.uploaded} uploaded, {summary.skipped} duplicate skipped, {summary.failed} failed
+          </p>
+        )}
+
+        {errorMessage && (
+          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+            {errorMessage}
           </p>
         )}
 

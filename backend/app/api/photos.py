@@ -85,8 +85,14 @@ async def upload_photos(
         storage_key = f"users/{user_id}/photos/{uuid4()}.jpg"
         thumbnail_key = f"users/{user_id}/thumbnails/{uuid4()}.webp"
 
-        upload_file(file_bytes, storage_key, file.content_type)
-        upload_file(thumbnail_bytes, thumbnail_key, "image/webp")
+        try:
+            upload_file(file_bytes, storage_key, file.content_type)
+            upload_file(thumbnail_bytes, thumbnail_key, "image/webp")
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Upload storage is not configured: {exc}",
+            ) from exc
 
         photo = Photo(
             user_id=current_user.id,

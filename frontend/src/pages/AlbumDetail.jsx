@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import { deleteAlbum, getAlbum, patchAlbum } from '../api/albums';
+import { deleteAlbum, disableAlbumShare, enableAlbumShare, getAlbum, patchAlbum } from '../api/albums';
 import Lightbox from '../components/Lightbox';
 import PhotoGrid from '../components/PhotoGrid';
 
@@ -15,6 +15,7 @@ export default function AlbumDetail() {
   const [nameError, setNameError] = useState('');
   const [openMenuPhotoId, setOpenMenuPhotoId] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [shareMessage, setShareMessage] = useState('');
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['album-detail', albumId],
@@ -67,6 +68,33 @@ export default function AlbumDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['albums'] });
       navigate('/albums');
+    },
+  });
+
+  const shareMutation = useMutation({
+    mutationFn: async () => {
+      if (data?.is_public) {
+        await disableAlbumShare(albumId);
+        return { disabled: true };
+      }
+      const response = await enableAlbumShare(albumId);
+      return response.data;
+    },
+    onSuccess: async (result) => {
+      if (!result?.disabled && result?.public_url) {
+        const absoluteUrl = `${window.location.origin}${result.public_url}`;
+        try {
+          await navigator.clipboard.writeText(absoluteUrl);
+          setShareMessage('Public link copied to clipboard');
+        } catch {
+          setShareMessage(`Public link: ${absoluteUrl}`);
+        }
+      } else {
+        setShareMessage('Public sharing disabled');
+      }
+      queryClient.invalidateQueries({ queryKey: ['album-detail', albumId] });
+      queryClient.invalidateQueries({ queryKey: ['albums'] });
+      setTimeout(() => setShareMessage(''), 2500);
     },
   });
 
@@ -155,12 +183,22 @@ export default function AlbumDetail() {
             </div>
             <button
               type="button"
+              onClick={() => shareMutation.mutate()}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              {data?.is_public ? 'Disable Share' : 'Share Album'}
+            </button>
+            <button
+              type="button"
               onClick={() => setShowDeleteModal(true)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
             >
               Delete Album
             </button>
           </div>
+          {shareMessage && (
+            <p className="mb-2 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">{shareMessage}</p>
+          )}
           <p className="mb-6 mt-1 text-sm text-slate-500">{data?.photo_count || 0} photos</p>
 
           {photos.length === 0 ? (

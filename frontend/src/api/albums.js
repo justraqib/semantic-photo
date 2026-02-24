@@ -14,3 +14,5 @@ export const patchAlbum = (albumId, payload) => albumsApi.patch(`/albums/${album
 export const deleteAlbum = (albumId) => albumsApi.delete(`/albums/${albumId}`);
 export const addAlbumPhotos = (albumId, payload) => albumsApi.post(`/albums/${albumId}/photos`, payload);
 export const removeAlbumPhoto = (albumId, photoId) => albumsApi.delete(`/albums/${albumId}/photos/${photoId}`);
+export const enableAlbumShare = (albumId) => albumsApi.post(`/albums/${albumId}/share`);
+export const disableAlbumShare = (albumId) => albumsApi.delete(`/albums/${albumId}/share`);

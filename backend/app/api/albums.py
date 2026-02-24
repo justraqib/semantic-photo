@@ -1,3 +1,4 @@
+import secrets
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from uuid import UUID
@@ -43,6 +44,7 @@ async def list_albums(
             Album.id,
             Album.name,
             Album.cover_photo_id,
+            Album.is_public,
             Photo.thumbnail_key.label("cover_thumbnail_key"),
             func.coalesce(photo_count_subquery.c.photo_count, 0).label("photo_count"),
         )
@@ -68,6 +70,7 @@ async def list_albums(
                 "cover_photo_id": str(row["cover_photo_id"]) if row["cover_photo_id"] else None,
                 "photo_count": int(row["photo_count"] or 0),
                 "cover_thumbnail_url": cover_thumbnail_url,
+                "is_public": bool(row["is_public"]),
             }
         )
 
@@ -97,6 +100,7 @@ async def create_album(
         "cover_photo_id": None,
         "photo_count": 0,
         "cover_thumbnail_url": None,
+        "is_public": bool(album.is_public),
     }
 
 
@@ -162,6 +166,7 @@ async def get_album(
         "name": album.name,
         "cover_photo_id": str(album.cover_photo_id) if album.cover_photo_id else None,
         "photo_count": photo_count,
+        "is_public": bool(album.is_public),
         "photos": photos,
     }
 
@@ -233,6 +238,7 @@ async def update_album(
         "name": album.name,
         "cover_photo_id": str(album.cover_photo_id) if album.cover_photo_id else None,
         "cover_thumbnail_url": cover_thumbnail_url,
+        "is_public": bool(album.is_public),
     }
 
 
@@ -257,6 +263,102 @@ async def delete_album(
     await db.delete(album)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/{album_id}/share")
+async def enable_album_share(
+    album_id: str = Path(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        album_uuid = UUID(album_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid album id") from exc
+
+    album_result = await db.execute(
+        select(Album).where(Album.id == album_uuid, Album.user_id == current_user.id)
+    )
+    album = album_result.scalar_one_or_none()
+    if album is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    if not album.public_token:
+        album.public_token = secrets.token_urlsafe(24)
+    album.is_public = True
+    await db.commit()
+    await db.refresh(album)
+
+    return {
+        "is_public": True,
+        "public_token": album.public_token,
+        "public_url": f"/albums/public/{album.public_token}",
+    }
+
+
+@router.delete("/{album_id}/share")
+async def disable_album_share(
+    album_id: str = Path(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        album_uuid = UUID(album_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid album id") from exc
+
+    album_result = await db.execute(
+        select(Album).where(Album.id == album_uuid, Album.user_id == current_user.id)
+    )
+    album = album_result.scalar_one_or_none()
+    if album is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    album.is_public = False
+    album.public_token = None
+    await db.commit()
+    return {"is_public": False}
+
+
+@router.get("/public/{token}")
+async def get_public_album(
+    token: str = Path(..., min_length=8),
+    limit: int = Query(default=100, ge=1, le=300),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Album).where(Album.public_token == token, Album.is_public.is_(True))
+    )
+    album = result.scalar_one_or_none()
+    if album is None:
+        raise HTTPException(status_code=404, detail="Public album not found")
+
+    photos_result = await db.execute(
+        select(Photo.id, Photo.thumbnail_key, Photo.storage_key, Photo.taken_at, AlbumPhoto.position)
+        .join(AlbumPhoto, AlbumPhoto.photo_id == Photo.id)
+        .where(AlbumPhoto.album_id == album.id, Photo.is_deleted.is_(False))
+        .order_by(AlbumPhoto.position.asc())
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = photos_result.mappings().all()
+
+    photos = []
+    for row in rows:
+        photos.append(
+            {
+                "id": str(row["id"]),
+                "taken_at": row["taken_at"].isoformat() if row["taken_at"] else None,
+                "thumbnail_url": generate_presigned_url(row["thumbnail_key"]) if row["thumbnail_key"] else None,
+                "url": generate_presigned_url(row["storage_key"]) if row["storage_key"] else None,
+            }
+        )
+
+    return {
+        "name": album.name,
+        "photos": photos,
+    }
 
 
 @router.post("/{album_id}/photos")

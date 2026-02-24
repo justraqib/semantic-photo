@@ -1,62 +1,72 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { uploadPhotos } from '../api/photos';
+import { useUpload } from '../hooks/useUpload';
 
 export default function UploadModal({ isOpen, onClose, onUploaded }) {
-  const [progress, setProgress] = useState({});
-  const [summary, setSummary] = useState(null);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [isUploading, setIsUploading] = useState(false);
+  const [folderError, setFolderError] = useState('');
+  const {
+    progress,
+    summary,
+    errorMessage,
+    isUploading,
+    reset,
+    handleUpload,
+  } = useUpload({
+    onUploaded,
+    onComplete: (result) => {
+      if (result.failed === 0) {
+        setTimeout(() => {
+          onClose?.();
+        }, 3000);
+      }
+    },
+  });
 
-  const reset = useCallback(() => {
-    setProgress({});
-    setSummary(null);
-    setErrorMessage('');
-    setIsUploading(false);
-  }, []);
 
   useEffect(() => {
     if (!isOpen) reset();
   }, [isOpen, reset]);
 
-  const handleUpload = useCallback(async (files) => {
-    if (!files?.length) return;
+  const collectImageFilesFromDirectory = useCallback(async (directoryHandle) => {
+    const files = [];
 
-    setIsUploading(true);
-    setErrorMessage('');
-    let uploaded = 0;
-    let skipped = 0;
-    let failed = 0;
-
-    for (const file of files) {
-      const formData = new FormData();
-      formData.append('files', file);
-
-      try {
-        const response = await uploadPhotos(formData, (evt) => {
-          const percent = evt.total ? Math.round((evt.loaded / evt.total) * 100) : 0;
-          setProgress((prev) => ({ ...prev, [file.name]: percent }));
-        });
-
-        uploaded += response.data?.uploaded ?? 0;
-        skipped += response.data?.skipped ?? 0;
-      } catch (error) {
-        failed += 1;
-        setProgress((prev) => ({ ...prev, [file.name]: 0 }));
-        setErrorMessage(error?.response?.data?.detail || 'Upload failed. Please try again.');
+    const visitDirectory = async (dirHandle) => {
+      for await (const entry of dirHandle.values()) {
+        if (entry.kind === 'file') {
+          const file = await entry.getFile();
+          if (file.type?.startsWith('image/')) {
+            files.push(file);
+          }
+        } else if (entry.kind === 'directory') {
+          await visitDirectory(entry);
+        }
       }
+    };
+
+    await visitDirectory(directoryHandle);
+    return files;
+  }, []);
+
+  const handleChooseFolder = useCallback(async () => {
+    setFolderError('');
+    if (!window.showDirectoryPicker) {
+      setFolderError('Folder picker is not supported in this browser.');
+      return;
     }
 
-    setSummary({ uploaded, skipped, failed });
-    setIsUploading(false);
-    if (uploaded > 0) onUploaded?.();
-
-    if (failed === 0) {
-      setTimeout(() => {
-        onClose?.();
-      }, 3000);
+    try {
+      const directoryHandle = await window.showDirectoryPicker();
+      const files = await collectImageFilesFromDirectory(directoryHandle);
+      if (!files.length) {
+        setFolderError('No image files found in selected folder.');
+        return;
+      }
+      await handleUpload(files);
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      setFolderError('Failed to read selected folder.');
     }
-  }, [onClose, onUploaded]);
+  }, [collectImageFilesFromDirectory, handleUpload]);
 
   const onDrop = useCallback((acceptedFiles) => {
     void handleUpload(acceptedFiles);
@@ -85,6 +95,22 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
         >
           <input {...getInputProps()} />
           <p className="text-slate-700">Drop photos here or click to browse</p>
+        </div>
+
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => void handleChooseFolder()}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            disabled={isUploading}
+          >
+            Choose a Folder
+          </button>
+          {folderError && (
+            <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+              {folderError}
+            </p>
+          )}
         </div>
 
         {progressEntries.length > 0 && (

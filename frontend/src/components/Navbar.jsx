@@ -1,8 +1,19 @@
+import { useQuery } from '@tanstack/react-query';
+import { listMapPhotos } from '../api/photos';
 import { useAuth } from '../hooks/useAuth';
 import { Link } from 'react-router-dom';
 
 export default function Navbar() {
   const { user } = useAuth();
+  const { data: mapPhotos } = useQuery({
+    queryKey: ['map-photos-nav'],
+    queryFn: async () => {
+      const response = await listMapPhotos();
+      return response.data;
+    },
+    staleTime: 60 * 1000,
+  });
+  const hasMapPhotos = Array.isArray(mapPhotos) && mapPhotos.length > 0;
 
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
@@ -11,6 +22,9 @@ export default function Navbar() {
           <Link to="/gallery" className="text-lg font-bold text-slate-900">Semantic Photo</Link>
           <Link to="/gallery" className="text-sm text-slate-600 hover:text-slate-900">Gallery</Link>
           <Link to="/albums" className="text-sm text-slate-600 hover:text-slate-900">Albums</Link>
+          {hasMapPhotos && (
+            <Link to="/map" className="text-sm text-slate-600 hover:text-slate-900">Map</Link>
+          )}
           <Link to="/settings" className="text-sm text-slate-600 hover:text-slate-900">Settings</Link>
         </div>
 

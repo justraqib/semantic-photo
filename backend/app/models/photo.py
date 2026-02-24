@@ -35,3 +35,4 @@ class Photo(Base):
     is_deleted = Column(Boolean, server_default="false", nullable=False)
 
     user = relationship("User", back_populates="photos")
+    photo_tags = relationship("PhotoTag", back_populates="photo", cascade="all, delete-orphan")

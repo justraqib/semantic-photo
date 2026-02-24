@@ -7,6 +7,7 @@ import SearchEmptyState from '../components/SearchEmptyState';
 import SearchBar from '../components/SearchBar';
 import SearchResults from '../components/SearchResults';
 import UploadModal from '../components/UploadModal';
+import { useEmbeddingStatus } from '../hooks/useEmbeddingStatus';
 import { useMemories } from '../hooks/useMemories';
 import { usePhotos } from '../hooks/usePhotos';
 import { useSearch } from '../hooks/useSearch';
@@ -32,8 +33,12 @@ export default function Gallery() {
   const [isMemoryDismissed, setIsMemoryDismissed] = useState(false);
   const sentinelRef = useRef(null);
   const { memory } = useMemories();
+  const { status: embeddingStatus } = useEmbeddingStatus();
   const isSearchActive = query.trim().length >= 2;
   const clearSearch = () => setQuery('');
+  const pendingEmbeddings = embeddingStatus?.pending_for_user || 0;
+  const etaSeconds = embeddingStatus?.eta_seconds || 0;
+  const etaMinutes = Math.max(1, Math.ceil(etaSeconds / 60));
 
   const selectedIndex = useMemo(
     () => photos.findIndex((p) => p.id === selectedPhoto?.id),
@@ -122,6 +127,13 @@ export default function Gallery() {
         isSearching={isSearching}
       />
 
+      {pendingEmbeddings > 0 && (
+        <div className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-indigo-900">
+          AI indexing in progress: {pendingEmbeddings} photo{pendingEmbeddings > 1 ? 's' : ''} pending.
+          Estimated time: about {etaMinutes} min.
+        </div>
+      )}
+
       {isSearchActive && (
         <div className="mb-4 flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-700">
           <span>
@@ -179,7 +191,10 @@ export default function Gallery() {
       <UploadModal
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
-        onUploaded={() => queryClient.invalidateQueries({ queryKey: ['photos'] })}
+        onUploaded={() => {
+          queryClient.invalidateQueries({ queryKey: ['photos'] });
+          queryClient.invalidateQueries({ queryKey: ['embedding-status'] });
+        }}
       />
 
       <Lightbox

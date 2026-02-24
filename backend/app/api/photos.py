@@ -10,12 +10,12 @@ from uuid import UUID, uuid4
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_current_user
 from app.core.database import get_db
-from app.jobs.queue import push_embedding_job
+from app.jobs.queue import get_embedding_queue_length, push_embedding_job
 from app.models.photo import Photo
 from app.models.user import User
 from app.services.dedup import compute_phash, is_duplicate
@@ -190,6 +190,47 @@ async def list_photos(
         next_cursor = photos[-1].uploaded_at.isoformat()
 
     return {"items": items, "next_cursor": next_cursor}
+
+
+@router.get("/embedding-status")
+async def embedding_status(
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    pending_for_user = (
+        await db.execute(
+            select(func.count())
+            .select_from(Photo)
+            .where(
+                Photo.user_id == current_user.id,
+                Photo.is_deleted.is_(False),
+                Photo.embedding.is_(None),
+            )
+        )
+    ).scalar_one()
+    ready_for_user = (
+        await db.execute(
+            select(func.count())
+            .select_from(Photo)
+            .where(
+                Photo.user_id == current_user.id,
+                Photo.is_deleted.is_(False),
+                Photo.embedding.is_not(None),
+            )
+        )
+    ).scalar_one()
+
+    # CPU CLIP inference is usually around a couple of seconds per image.
+    avg_seconds_per_image = 2
+    eta_seconds = int(pending_for_user) * avg_seconds_per_image
+
+    return {
+        "pending_for_user": int(pending_for_user),
+        "ready_for_user": int(ready_for_user),
+        "queue_length": get_embedding_queue_length(),
+        "avg_seconds_per_image": avg_seconds_per_image,
+        "eta_seconds": eta_seconds,
+    }
 
 
 @router.get("/map")

@@ -48,3 +48,15 @@ def pop_embedding_job() -> str | None:
 
     _, photo_id = result
     return photo_id
+
+
+def get_embedding_queue_length() -> int:
+    client = _get_redis_client()
+    if client is None:
+        return 0
+
+    try:
+        length = client.llen(_QUEUE_NAME)
+        return int(length) if length is not None else 0
+    except RedisError:
+        return 0

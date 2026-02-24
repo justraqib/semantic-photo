@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import EmptyState from '../components/EmptyState';
 import Lightbox from '../components/Lightbox';
 import PhotoGrid from '../components/PhotoGrid';
@@ -7,6 +7,7 @@ import SearchEmptyState from '../components/SearchEmptyState';
 import SearchBar from '../components/SearchBar';
 import SearchResults from '../components/SearchResults';
 import UploadModal from '../components/UploadModal';
+import { startEmbedding } from '../api/photos';
 import { useEmbeddingStatus } from '../hooks/useEmbeddingStatus';
 import { useMemories } from '../hooks/useMemories';
 import { usePhotos } from '../hooks/usePhotos';
@@ -37,8 +38,19 @@ export default function Gallery() {
   const isSearchActive = query.trim().length >= 2;
   const clearSearch = () => setQuery('');
   const pendingEmbeddings = embeddingStatus?.pending_for_user || 0;
+  const readyEmbeddings = embeddingStatus?.ready_for_user || 0;
+  const totalEmbeddings = embeddingStatus?.total_for_user || (pendingEmbeddings + readyEmbeddings);
+  const progressPercent = embeddingStatus?.progress_percent ?? (totalEmbeddings ? Math.round((readyEmbeddings / totalEmbeddings) * 100) : 100);
   const etaSeconds = embeddingStatus?.eta_seconds || 0;
   const etaMinutes = Math.max(1, Math.ceil(etaSeconds / 60));
+  const queueLength = embeddingStatus?.queue_length || 0;
+
+  const startEmbeddingMutation = useMutation({
+    mutationFn: startEmbedding,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['embedding-status'] });
+    },
+  });
 
   const selectedIndex = useMemo(
     () => photos.findIndex((p) => p.id === selectedPhoto?.id),
@@ -127,10 +139,36 @@ export default function Gallery() {
         isSearching={isSearching}
       />
 
-      {pendingEmbeddings > 0 && (
-        <div className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-indigo-900">
-          AI indexing in progress: {pendingEmbeddings} photo{pendingEmbeddings > 1 ? 's' : ''} pending.
-          Estimated time: about {etaMinutes} min.
+      {totalEmbeddings > 0 && (
+        <div className="mb-4 rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 via-sky-50 to-indigo-50 p-4">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-slate-800">
+              <span className={`h-2.5 w-2.5 rounded-full ${pendingEmbeddings > 0 ? 'animate-pulse bg-cyan-500' : 'bg-emerald-500'}`} />
+              <p className="text-sm font-semibold">
+                {pendingEmbeddings > 0 ? 'AI indexing in progress' : 'AI indexing complete'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => startEmbeddingMutation.mutate()}
+              disabled={startEmbeddingMutation.isPending}
+              className="rounded-lg border border-cyan-300 bg-white px-3 py-1.5 text-xs font-medium text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {startEmbeddingMutation.isPending ? 'Starting...' : 'Start/Retry Now'}
+            </button>
+          </div>
+
+          <div className="mb-2 h-2.5 overflow-hidden rounded-full bg-white">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 transition-all duration-700"
+              style={{ width: `${Math.max(2, progressPercent)}%` }}
+            />
+          </div>
+
+          <p className="text-xs text-slate-700">
+            {progressPercent}% complete ({readyEmbeddings}/{totalEmbeddings}) • {pendingEmbeddings} pending • Queue {queueLength}
+            {pendingEmbeddings > 0 ? ` • ETA ~${etaMinutes} min` : ''}
+          </p>
         </div>
       )}
 

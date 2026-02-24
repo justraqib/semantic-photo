@@ -222,14 +222,42 @@ async def embedding_status(
 
     # CPU CLIP inference is usually around a couple of seconds per image.
     avg_seconds_per_image = 2
-    eta_seconds = int(pending_for_user) * avg_seconds_per_image
+    pending = int(pending_for_user)
+    ready = int(ready_for_user)
+    total = pending + ready
+    eta_seconds = pending * avg_seconds_per_image
+    progress_percent = int((ready / total) * 100) if total else 100
 
     return {
-        "pending_for_user": int(pending_for_user),
-        "ready_for_user": int(ready_for_user),
+        "pending_for_user": pending,
+        "ready_for_user": ready,
+        "total_for_user": total,
+        "progress_percent": progress_percent,
         "queue_length": get_embedding_queue_length(),
         "avg_seconds_per_image": avg_seconds_per_image,
         "eta_seconds": eta_seconds,
+    }
+
+
+@router.post("/embedding/start")
+async def start_embedding_for_pending(
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Photo.id).where(
+            Photo.user_id == current_user.id,
+            Photo.is_deleted.is_(False),
+            Photo.embedding.is_(None),
+        )
+    )
+    photo_ids = [str(photo_id) for (photo_id,) in result.all()]
+    for photo_id in photo_ids:
+        push_embedding_job(photo_id)
+
+    return {
+        "queued": len(photo_ids),
+        "queue_length": get_embedding_queue_length(),
     }
 
 

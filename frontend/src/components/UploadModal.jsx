@@ -5,11 +5,15 @@ import { useUpload } from '../hooks/useUpload';
 export default function UploadModal({ isOpen, onClose, onUploaded }) {
   const [folderError, setFolderError] = useState('');
   const {
+    pendingFiles,
+    preview,
+    isPreviewing,
     progress,
     summary,
     errorMessage,
     isUploading,
     reset,
+    prepareUpload,
     handleUpload,
   } = useUpload({
     onUploaded,
@@ -26,13 +30,14 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
     if (!isOpen) reset();
   }, [isOpen, reset]);
 
-  const collectImageFilesFromDirectory = useCallback(async (directoryHandle) => {
+  const collectUploadFilesFromDirectory = useCallback(async (directoryHandle) => {
     const files = [];
     const visitDirectory = async (dirHandle) => {
       for await (const entry of dirHandle.values()) {
         if (entry.kind === 'file') {
           const file = await entry.getFile();
-          if (file.type?.startsWith('image/')) {
+          const isZip = file.type === 'application/zip' || file.name.toLowerCase().endsWith('.zip');
+          if (file.type?.startsWith('image/') || isZip) {
             files.push(file);
           }
         } else if (entry.kind === 'directory') {
@@ -52,29 +57,29 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
     }
     try {
       const directoryHandle = await window.showDirectoryPicker();
-      const files = await collectImageFilesFromDirectory(directoryHandle);
+      const files = await collectUploadFilesFromDirectory(directoryHandle);
       if (!files.length) {
-        setFolderError('No image files found in selected folder.');
+        setFolderError('No image or ZIP files found in selected folder.');
         return;
       }
-      await handleUpload(files);
+      await prepareUpload(files);
     } catch (error) {
       if (error?.name === 'AbortError') return;
       setFolderError('Failed to read selected folder.');
     }
-  }, [collectImageFilesFromDirectory, handleUpload]);
+  }, [collectUploadFilesFromDirectory, prepareUpload]);
 
   const onDrop = useCallback(
     (acceptedFiles) => {
-      void handleUpload(acceptedFiles);
+      void prepareUpload(acceptedFiles);
     },
-    [handleUpload]
+    [prepareUpload]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     multiple: true,
-    accept: { 'image/*': [] },
+    accept: { 'image/*': [], 'application/zip': ['.zip'] },
   });
 
   const progressEntries = useMemo(() => Object.entries(progress), [progress]);
@@ -119,7 +124,7 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
           <p className="text-foreground">
             {isDragActive ? 'Drop photos here' : 'Drop photos here or click to browse'}
           </p>
-          <p className="mt-1 text-sm text-foreground-dim">Supports JPG, PNG, WebP, HEIC</p>
+          <p className="mt-1 text-sm text-foreground-dim">Supports JPG, PNG, WebP, HEIC, ZIP</p>
         </div>
 
         <div className="mt-3">
@@ -168,9 +173,38 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
           </div>
         )}
 
+        {isPreviewing && (
+          <div className="mt-4 rounded-xl bg-surface border border-surface-border px-4 py-3 text-sm text-foreground-dim">
+            Checking duplicates before upload...
+          </div>
+        )}
+
+        {preview && (
+          <div className="mt-4 rounded-xl bg-surface border border-surface-border px-4 py-3 text-sm text-foreground">
+            <p>Total selected: {preview.total_selected} photos</p>
+            <p>Already uploaded: {preview.already_uploaded} duplicates</p>
+            <p>Duplicates in current selection: {preview.duplicates_in_selection}</p>
+            <p>New photos: {preview.new_photos} will upload</p>
+            {preview.failed > 0 && <p>Failed to read: {preview.failed}</p>}
+          </div>
+        )}
+
         {errorMessage && (
           <div className="mt-3 rounded-xl bg-danger/10 border border-danger/20 px-4 py-3 text-sm text-danger">
             {errorMessage}
+          </div>
+        )}
+
+        {preview && pendingFiles.length > 0 && (
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={() => void handleUpload()}
+              disabled={isUploading || isPreviewing || preview.new_photos <= 0}
+              className="btn-primary text-sm disabled:opacity-40"
+            >
+              Upload new photos
+            </button>
           </div>
         )}
       </div>

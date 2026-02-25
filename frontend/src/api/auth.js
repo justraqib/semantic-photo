@@ -1,6 +1,5 @@
 import axios from 'axios';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE_URL } from './baseUrl';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -26,8 +25,10 @@ api.interceptors.response.use(
 export const getMe = () => api.get('/auth/me');
 export const logout = () => api.post('/auth/logout');
 export const loginWithGoogle = () => {
-  window.location.href = `${API_BASE_URL}/auth/google`;
+  const frontendOrigin = encodeURIComponent(window.location.origin);
+  window.location.href = `${API_BASE_URL}/auth/google?frontend_origin=${frontendOrigin}`;
 };
 export const loginWithGithub = () => {
-  window.location.href = `${API_BASE_URL}/auth/github`;
+  const frontendOrigin = encodeURIComponent(window.location.origin);
+  window.location.href = `${API_BASE_URL}/auth/github?frontend_origin=${frontendOrigin}`;
 };

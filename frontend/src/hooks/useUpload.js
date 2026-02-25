@@ -1,25 +1,51 @@
 import { useCallback, useState } from 'react';
-import { uploadPhotos } from '../api/photos';
+import { previewUploadPhotos, uploadPhotos } from '../api/photos';
 
 function getUploadErrorMessage(error) {
   return error?.response?.data?.detail || 'Upload failed. Please try again.';
 }
 
 export function useUpload({ onUploaded, onComplete } = {}) {
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [preview, setPreview] = useState(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
   const [progress, setProgress] = useState({});
   const [summary, setSummary] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
 
   const reset = useCallback(() => {
+    setPendingFiles([]);
+    setPreview(null);
+    setIsPreviewing(false);
     setProgress({});
     setSummary(null);
     setErrorMessage('');
     setIsUploading(false);
   }, []);
 
+  const prepareUpload = useCallback(async (files) => {
+    if (!files?.length) return;
+    setErrorMessage('');
+    setSummary(null);
+    setPreview(null);
+    setPendingFiles(files);
+    setIsPreviewing(true);
+
+    try {
+      const formData = new FormData();
+      files.forEach((file) => formData.append('files', file));
+      const response = await previewUploadPhotos(formData);
+      setPreview(response.data);
+    } catch (error) {
+      setErrorMessage(getUploadErrorMessage(error));
+    } finally {
+      setIsPreviewing(false);
+    }
+  }, []);
+
   const handleUpload = useCallback(
-    async (files) => {
+    async (files = pendingFiles) => {
       if (!files?.length) return;
 
       setIsUploading(true);
@@ -53,16 +79,22 @@ export function useUpload({ onUploaded, onComplete } = {}) {
 
       if (uploaded > 0) onUploaded?.();
       onComplete?.(nextSummary);
+      setPendingFiles([]);
+      setPreview(null);
     },
-    [onUploaded, onComplete]
+    [onUploaded, onComplete, pendingFiles]
   );
 
   return {
+    pendingFiles,
+    preview,
+    isPreviewing,
     progress,
     summary,
     errorMessage,
     isUploading,
     reset,
+    prepareUpload,
     handleUpload,
   };
 }

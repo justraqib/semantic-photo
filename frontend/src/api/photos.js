@@ -1,6 +1,5 @@
 import axios from 'axios';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE_URL } from './baseUrl';
 
 const photoApi = axios.create({
   baseURL: API_BASE_URL,
@@ -13,5 +12,6 @@ export const getEmbeddingStatus = () => photoApi.get('/photos/embedding-status')
 export const startEmbedding = () => photoApi.post('/photos/embedding/start');
 export const listMapPhotos = () => photoApi.get('/photos/map');
 export const exportPhotosArchive = () => photoApi.get('/photos/export', { responseType: 'blob' });
+export const previewUploadPhotos = (formData) => photoApi.post('/photos/upload/preview', formData);
 export const uploadPhotos = (formData, onUploadProgress) => photoApi.post('/photos/upload', formData, { onUploadProgress });
 export const softDeletePhoto = (photoId) => photoApi.delete(`/photos/${photoId}`);

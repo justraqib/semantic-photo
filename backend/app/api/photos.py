@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import mimetypes
 import zipfile
 from datetime import datetime
 from pathlib import Path as FilePath
@@ -22,6 +23,7 @@ from app.services.dedup import compute_phash, is_duplicate
 from app.services.exif import extract_exif
 from app.services.storage import delete_file, generate_presigned_url, get_file, upload_file
 from app.services.thumbnail import generate_thumbnail
+from app.services.zip_utils import extract_image_files_from_zip, is_zip_upload
 
 router = APIRouter(prefix="/photos", tags=["photos"])
 
@@ -39,6 +41,109 @@ def _parse_taken_at(exif_taken_at: str | None) -> datetime | None:
         return None
 
 
+def _assert_magic_bytes(content_type: str, file_bytes: bytes, filename: str) -> None:
+    if content_type in {"image/jpeg", "image/jpg"} and not file_bytes.startswith(JPEG_MAGIC):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Magic bytes do not match claimed type for {filename} (expected JPEG).",
+        )
+    if content_type == "image/png" and not file_bytes.startswith(PNG_MAGIC):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Magic bytes do not match claimed type for {filename} (expected PNG).",
+        )
+
+
+def _normalize_image_content_type(filename: str, content_type: str | None) -> str:
+    if content_type and content_type.startswith("image/"):
+        return content_type
+    guessed, _ = mimetypes.guess_type(filename)
+    if guessed and guessed.startswith("image/"):
+        return guessed
+    return "application/octet-stream"
+
+
+async def _expand_upload_files(files: list[UploadFile]) -> tuple[list[tuple[str, bytes, str]], int]:
+    expanded_images: list[tuple[str, bytes, str]] = []
+    failed_files = 0
+    for file in files:
+        filename = file.filename or "upload"
+        file_bytes = await file.read()
+
+        if is_zip_upload(filename, file.content_type):
+            try:
+                images = extract_image_files_from_zip(file_bytes, MAX_FILE_SIZE_BYTES)
+            except ValueError:
+                failed_files += 1
+                continue
+            for image_name, image_bytes, image_type in images:
+                expanded_images.append((image_name, image_bytes, image_type))
+            continue
+
+        content_type = _normalize_image_content_type(filename, file.content_type)
+        if not content_type.startswith("image/"):
+            failed_files += 1
+            continue
+        expanded_images.append((filename, file_bytes, content_type))
+
+    return expanded_images, failed_files
+
+
+@router.post("/upload/preview")
+async def preview_upload_photos(
+    files: list[UploadFile] = File(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided.")
+
+    user_id = str(current_user.id)
+    expanded_images, failed_files = await _expand_upload_files(files)
+
+    already_uploaded = 0
+    duplicates_in_selection = 0
+    new_photos = 0
+    seen_phashes: set[str] = set()
+
+    for image_name, image_bytes, image_content_type in expanded_images:
+        if len(image_bytes) > MAX_FILE_SIZE_BYTES:
+            failed_files += 1
+            continue
+
+        try:
+            _assert_magic_bytes(image_content_type, image_bytes, image_name)
+        except HTTPException:
+            failed_files += 1
+            continue
+
+        try:
+            phash_str = compute_phash(image_bytes)
+        except Exception:
+            failed_files += 1
+            continue
+
+        if phash_str in seen_phashes:
+            duplicates_in_selection += 1
+            continue
+        seen_phashes.add(phash_str)
+
+        if await is_duplicate(phash_str, user_id, db):
+            already_uploaded += 1
+        else:
+            new_photos += 1
+
+    total_selected = len(expanded_images)
+
+    return {
+        "total_selected": total_selected,
+        "already_uploaded": already_uploaded,
+        "duplicates_in_selection": duplicates_in_selection,
+        "new_photos": new_photos,
+        "failed": failed_files,
+    }
+
+
 @router.post("/upload")
 async def upload_photos(
     files: list[UploadFile] = File(...),
@@ -50,49 +155,48 @@ async def upload_photos(
 
     uploaded_count = 0
     skipped_count = 0
+    failed_count = 0
     user_id = str(current_user.id)
     queued_photo_ids: list[str] = []
+    seen_phashes: set[str] = set()
 
-    for file in files:
-        if not file.content_type or not file.content_type.startswith("image/"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid MIME type for {file.filename}. Only image/* is allowed.",
-            )
+    expanded_images, failed_files = await _expand_upload_files(files)
+    failed_count += failed_files
 
-        file_bytes = await file.read()
+    for image_name, image_bytes, image_content_type in expanded_images:
+        if len(image_bytes) > MAX_FILE_SIZE_BYTES:
+            failed_count += 1
+            continue
 
-        if len(file_bytes) > MAX_FILE_SIZE_BYTES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{file.filename} exceeds 50MB limit.",
-            )
+        try:
+            _assert_magic_bytes(image_content_type, image_bytes, image_name)
+        except HTTPException:
+            failed_count += 1
+            continue
 
-        if file.content_type in {"image/jpeg", "image/jpg"} and not file_bytes.startswith(JPEG_MAGIC):
-            raise HTTPException(
-                status_code=422,
-                detail=f"Magic bytes do not match claimed type for {file.filename} (expected JPEG).",
-            )
+        try:
+            phash_str = compute_phash(image_bytes)
+        except Exception:
+            failed_count += 1
+            continue
 
-        if file.content_type == "image/png" and not file_bytes.startswith(PNG_MAGIC):
-            raise HTTPException(
-                status_code=422,
-                detail=f"Magic bytes do not match claimed type for {file.filename} (expected PNG).",
-            )
+        if phash_str in seen_phashes:
+            skipped_count += 1
+            continue
+        seen_phashes.add(phash_str)
 
-        phash_str = compute_phash(file_bytes)
         if await is_duplicate(phash_str, user_id, db):
             skipped_count += 1
             continue
 
-        thumbnail_bytes = generate_thumbnail(file_bytes)
-        exif = extract_exif(file_bytes)
+        thumbnail_bytes = generate_thumbnail(image_bytes)
+        exif = extract_exif(image_bytes)
 
         storage_key = f"users/{user_id}/photos/{uuid4()}.jpg"
         thumbnail_key = f"users/{user_id}/thumbnails/{uuid4()}.webp"
 
         try:
-            upload_file(file_bytes, storage_key, file.content_type)
+            upload_file(image_bytes, storage_key, image_content_type)
             upload_file(thumbnail_bytes, thumbnail_key, "image/webp")
         except ValueError as exc:
             raise HTTPException(
@@ -120,9 +224,9 @@ async def upload_photos(
             user_id=current_user.id,
             storage_key=storage_key,
             thumbnail_key=thumbnail_key,
-            original_filename=file.filename,
-            file_size_bytes=len(file_bytes),
-            mime_type=file.content_type,
+            original_filename=image_name,
+            file_size_bytes=len(image_bytes),
+            mime_type=image_content_type,
             width=exif.get("width"),
             height=exif.get("height"),
             taken_at=_parse_taken_at(exif.get("taken_at")),
@@ -145,7 +249,7 @@ async def upload_photos(
     for photo_id in queued_photo_ids:
         push_embedding_job(photo_id)
 
-    return {"uploaded": uploaded_count, "skipped": skipped_count}
+    return {"uploaded": uploaded_count, "skipped": skipped_count, "failed": failed_count}
 
 
 @router.get("")

@@ -1,8 +1,13 @@
+import base64
+import json
+from datetime import datetime, timezone
+from urllib.parse import urlencode, urlparse
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-import httpx
-from urllib.parse import urlencode
+
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token, decode_access_token, hash_token
@@ -10,7 +15,6 @@ from app.services.auth_service import get_or_create_user, create_refresh_token_f
 from sqlalchemy import select
 from app.models.drive import DriveSyncState
 from app.models.user import OAuthAccount, RefreshToken, User
-from datetime import datetime, timezone
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -37,9 +41,57 @@ async def require_current_user(request: Request, db: AsyncSession = Depends(get_
 
     return user
 
+
+def _strip_trailing_slash(url: str) -> str:
+    return url.rstrip("/")
+
+
+def _allowed_frontend_origins() -> set[str]:
+    origins = {_strip_trailing_slash(settings.FRONTEND_URL)}
+    if settings.FRONTEND_URLS:
+        extra = [item.strip() for item in settings.FRONTEND_URLS.split(",") if item.strip()]
+        origins.update(_strip_trailing_slash(item) for item in extra)
+    return origins
+
+
+def _request_origin(request: Request) -> str:
+    return f"{request.url.scheme}://{request.url.netloc}"
+
+
+def _choose_frontend_origin(request: Request, frontend_origin: str | None) -> str:
+    origin = _strip_trailing_slash(frontend_origin) if frontend_origin else _strip_trailing_slash(settings.FRONTEND_URL)
+    if origin not in _allowed_frontend_origins():
+        raise HTTPException(status_code=400, detail=f"Unsupported frontend origin: {origin}")
+    return origin
+
+
+def _encode_oauth_state(payload: dict[str, str]) -> str:
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("utf-8")
+
+
+def _decode_oauth_state(state: str | None) -> dict[str, str]:
+    if not state:
+        return {}
+    try:
+        decoded = base64.urlsafe_b64decode(state.encode("utf-8"))
+        data = json.loads(decoded.decode("utf-8"))
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items()}
+    except Exception:
+        return {}
+    return {}
+
+
+def _valid_origin(url: str | None) -> bool:
+    if not url:
+        return False
+    parsed = urlparse(url)
+    return bool(parsed.scheme and parsed.netloc)
+
 @router.get("/google")
 @router.get("/google/login")
-async def google_login():
+async def google_login(request: Request, frontend_origin: str | None = None):
     scope = " ".join(
         [
             "openid",
@@ -48,25 +100,43 @@ async def google_login():
             "https://www.googleapis.com/auth/drive.readonly",
         ]
     )
+    selected_frontend_origin = _choose_frontend_origin(request, frontend_origin)
+    backend_origin = _request_origin(request)
+    redirect_uri = f"{backend_origin}/auth/google/callback"
+    state = _encode_oauth_state(
+        {
+            "frontend_origin": selected_frontend_origin,
+            "backend_origin": backend_origin,
+        }
+    )
     params = {
         "client_id": settings.GOOGLE_CLIENT_ID,
-        "redirect_uri": f"{settings.BACKEND_URL}/auth/google/callback",
+        "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": scope,
         "access_type": "offline",
-        "prompt": "consent"
+        "prompt": "consent",
+        "state": state,
     }
     query = urlencode(params)
     return RedirectResponse(f"{GOOGLE_AUTH_URL}?{query}")
 
 @router.get("/google/callback")
-async def google_callback(code: str, response: Response, db: AsyncSession = Depends(get_db)):
+async def google_callback(code: str, request: Request, response: Response, state: str | None = None, db: AsyncSession = Depends(get_db)):
+    state_data = _decode_oauth_state(state)
+    backend_origin = _strip_trailing_slash(state_data.get("backend_origin", "")) or _strip_trailing_slash(settings.BACKEND_URL)
+    if not _valid_origin(backend_origin):
+        backend_origin = _strip_trailing_slash(settings.BACKEND_URL)
+    frontend_origin = _strip_trailing_slash(state_data.get("frontend_origin", "")) or _strip_trailing_slash(settings.FRONTEND_URL)
+    if frontend_origin not in _allowed_frontend_origins():
+        frontend_origin = _strip_trailing_slash(settings.FRONTEND_URL)
+
     async with httpx.AsyncClient() as client:
         token_response = await client.post(GOOGLE_TOKEN_URL, data={
             "code": code,
             "client_id": settings.GOOGLE_CLIENT_ID,
             "client_secret": settings.GOOGLE_CLIENT_SECRET,
-            "redirect_uri": f"{settings.BACKEND_URL}/auth/google/callback",
+            "redirect_uri": f"{backend_origin}/auth/google/callback",
             "grant_type": "authorization_code"
         })
     if token_response.status_code != 200:
@@ -107,7 +177,7 @@ async def google_callback(code: str, response: Response, db: AsyncSession = Depe
     access_token = create_access_token(str(user.id))
     raw_refresh_token = await create_refresh_token_for_user(db, user.id)
 
-    redirect = RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/success")
+    redirect = RedirectResponse(url=f"{frontend_origin}/auth/success")
     redirect.set_cookie("access_token", access_token, httponly=True, samesite="lax", max_age=900)
     redirect.set_cookie("refresh_token", raw_refresh_token, httponly=True, samesite="lax", max_age=86400*30)
     return redirect
@@ -152,22 +222,45 @@ async def get_me(user: User = Depends(require_current_user)):
 
 
 @router.get("/github")
-async def github_login():
+async def github_login(request: Request, frontend_origin: str | None = None):
     if not settings.GITHUB_CLIENT_ID:
         raise HTTPException(status_code=500, detail="GitHub OAuth is not configured")
 
+    selected_frontend_origin = _choose_frontend_origin(request, frontend_origin)
+    backend_origin = _request_origin(request)
+    redirect_uri = f"{backend_origin}/auth/github/callback"
+    state = _encode_oauth_state(
+        {
+            "frontend_origin": selected_frontend_origin,
+            "backend_origin": backend_origin,
+        }
+    )
     params = {
         "client_id": settings.GITHUB_CLIENT_ID,
-        "redirect_uri": f"{settings.BACKEND_URL}/auth/github/callback",
+        "redirect_uri": redirect_uri,
         "scope": "read:user user:email",
+        "state": state,
     }
     return RedirectResponse(f"{GITHUB_AUTH_URL}?{urlencode(params)}")
 
 
 @router.get("/github/callback")
-async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
+async def github_callback(
+    code: str,
+    request: Request,
+    state: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
     if not settings.GITHUB_CLIENT_ID or not settings.GITHUB_CLIENT_SECRET:
         raise HTTPException(status_code=500, detail="GitHub OAuth is not configured")
+
+    state_data = _decode_oauth_state(state)
+    backend_origin = _strip_trailing_slash(state_data.get("backend_origin", "")) or _strip_trailing_slash(settings.BACKEND_URL)
+    if not _valid_origin(backend_origin):
+        backend_origin = _strip_trailing_slash(settings.BACKEND_URL)
+    frontend_origin = _strip_trailing_slash(state_data.get("frontend_origin", "")) or _strip_trailing_slash(settings.FRONTEND_URL)
+    if frontend_origin not in _allowed_frontend_origins():
+        frontend_origin = _strip_trailing_slash(settings.FRONTEND_URL)
 
     async with httpx.AsyncClient() as client:
         token_response = await client.post(
@@ -176,7 +269,7 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
                 "client_id": settings.GITHUB_CLIENT_ID,
                 "client_secret": settings.GITHUB_CLIENT_SECRET,
                 "code": code,
-                "redirect_uri": f"{settings.BACKEND_URL}/auth/github/callback",
+                "redirect_uri": f"{backend_origin}/auth/github/callback",
             },
             headers={"Accept": "application/json"},
         )
@@ -256,7 +349,7 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
     app_access_token = create_access_token(str(user.id))
     raw_refresh_token = await create_refresh_token_for_user(db, user.id)
 
-    redirect = RedirectResponse(url=f"{settings.FRONTEND_URL}/gallery")
+    redirect = RedirectResponse(url=f"{frontend_origin}/gallery")
     redirect.set_cookie("access_token", app_access_token, httponly=True, samesite="lax", max_age=900)
     redirect.set_cookie("refresh_token", raw_refresh_token, httponly=True, samesite="lax", max_age=86400*30)
     return redirect

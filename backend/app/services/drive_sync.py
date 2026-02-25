@@ -17,6 +17,7 @@ from app.services.dedup import compute_phash, is_duplicate
 from app.services.exif import extract_exif
 from app.services.storage import upload_file
 from app.services.thumbnail import generate_thumbnail
+from app.services.zip_utils import extract_image_files_from_zip, is_zip_upload
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
@@ -37,6 +38,12 @@ def _looks_like_image(filename: str, mime_type: str) -> bool:
         return True
     lower = filename.lower()
     return lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp", ".tiff"))
+
+
+def _looks_like_supported_drive_file(filename: str, mime_type: str) -> bool:
+    if _looks_like_image(filename, mime_type):
+        return True
+    return is_zip_upload(filename, mime_type)
 
 
 async def refresh_access_token(refresh_token: str) -> str:
@@ -104,7 +111,7 @@ async def _collect_drive_images(
             if mime_type == GOOGLE_DRIVE_FOLDER_MIME:
                 queue.append(item["id"])
                 continue
-            if _looks_like_image(item.get("name", ""), mime_type):
+            if _looks_like_supported_drive_file(item.get("name", ""), mime_type):
                 images.append(item)
 
     return images
@@ -143,6 +150,8 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
     uploaded = 0
     skipped = 0
     failed = 0
+    total = 0
+    max_upload_bytes = 50 * 1024 * 1024
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         image_files = await _collect_drive_images(client, headers, state.folder_id)
@@ -155,73 +164,151 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                 failed += 1
                 continue
 
-            existing_photo_result = await db.execute(
-                select(Photo.id).where(
-                    Photo.user_id == user_id,
-                    Photo.source == "google_drive",
-                    Photo.source_id == source_id,
+            if _looks_like_image(file_name, mime_type):
+                total += 1
+                existing_photo_result = await db.execute(
+                    select(Photo.id).where(
+                        Photo.user_id == user_id,
+                        Photo.source == "google_drive",
+                        Photo.source_id == source_id,
+                    )
                 )
-            )
-            if existing_photo_result.scalar_one_or_none():
-                skipped += 1
-                continue
-
-            try:
-                file_response = await client.get(
-                    f"{GOOGLE_DRIVE_API_BASE}/files/{source_id}",
-                    headers=headers,
-                    params={"alt": "media"},
-                )
-                file_response.raise_for_status()
-                file_bytes = file_response.content
-
-                phash_str = compute_phash(file_bytes)
-                if await is_duplicate(phash_str, str(user_id), db):
+                if existing_photo_result.scalar_one_or_none():
                     skipped += 1
                     continue
 
-                thumbnail_bytes = generate_thumbnail(file_bytes)
-                exif = extract_exif(file_bytes)
+                try:
+                    file_response = await client.get(
+                        f"{GOOGLE_DRIVE_API_BASE}/files/{source_id}",
+                        headers=headers,
+                        params={"alt": "media"},
+                    )
+                    file_response.raise_for_status()
+                    file_bytes = file_response.content
 
-                storage_key = f"users/{user_id}/photos/{uuid4()}.jpg"
-                thumbnail_key = f"users/{user_id}/thumbnails/{uuid4()}.webp"
-                upload_file(file_bytes, storage_key, mime_type)
-                upload_file(thumbnail_bytes, thumbnail_key, "image/webp")
+                    if len(file_bytes) > max_upload_bytes:
+                        skipped += 1
+                        continue
 
-                photo = Photo(
-                    user_id=user_id,
-                    storage_key=storage_key,
-                    thumbnail_key=thumbnail_key,
-                    original_filename=file_name,
-                    file_size_bytes=len(file_bytes),
-                    mime_type=mime_type,
-                    width=exif.get("width"),
-                    height=exif.get("height"),
-                    taken_at=_parse_taken_at(exif.get("taken_at")),
-                    source="google_drive",
-                    source_id=source_id,
-                    phash=phash_str,
-                    embedding=None,
-                    caption=None,
-                    gps_lat=exif.get("gps_lat"),
-                    gps_lng=exif.get("gps_lng"),
-                    camera_make=exif.get("camera_make"),
-                    is_deleted=False,
-                )
-                db.add(photo)
-                await db.flush()
-                push_embedding_job(str(photo.id))
-                uploaded += 1
-            except Exception as exc:
-                failed += 1
-                print(f"Drive sync for user {user_id}: failed processing file {source_id}: {exc}")
+                    phash_str = compute_phash(file_bytes)
+                    if await is_duplicate(phash_str, str(user_id), db):
+                        skipped += 1
+                        continue
+
+                    thumbnail_bytes = generate_thumbnail(file_bytes)
+                    exif = extract_exif(file_bytes)
+
+                    storage_key = f"users/{user_id}/photos/{uuid4()}.jpg"
+                    thumbnail_key = f"users/{user_id}/thumbnails/{uuid4()}.webp"
+                    upload_file(file_bytes, storage_key, mime_type)
+                    upload_file(thumbnail_bytes, thumbnail_key, "image/webp")
+
+                    photo = Photo(
+                        user_id=user_id,
+                        storage_key=storage_key,
+                        thumbnail_key=thumbnail_key,
+                        original_filename=file_name,
+                        file_size_bytes=len(file_bytes),
+                        mime_type=mime_type,
+                        width=exif.get("width"),
+                        height=exif.get("height"),
+                        taken_at=_parse_taken_at(exif.get("taken_at")),
+                        source="google_drive",
+                        source_id=source_id,
+                        phash=phash_str,
+                        embedding=None,
+                        caption=None,
+                        gps_lat=exif.get("gps_lat"),
+                        gps_lng=exif.get("gps_lng"),
+                        camera_make=exif.get("camera_make"),
+                        is_deleted=False,
+                    )
+                    db.add(photo)
+                    await db.flush()
+                    push_embedding_job(str(photo.id))
+                    uploaded += 1
+                except Exception as exc:
+                    failed += 1
+                    print(f"Drive sync for user {user_id}: failed processing file {source_id}: {exc}")
+                    continue
                 continue
+
+            if is_zip_upload(file_name, mime_type):
+                try:
+                    file_response = await client.get(
+                        f"{GOOGLE_DRIVE_API_BASE}/files/{source_id}",
+                        headers=headers,
+                        params={"alt": "media"},
+                    )
+                    file_response.raise_for_status()
+                    zip_bytes = file_response.content
+                    entries = extract_image_files_from_zip(zip_bytes, max_upload_bytes)
+                except Exception as exc:
+                    failed += 1
+                    print(f"Drive sync for user {user_id}: failed reading zip {source_id}: {exc}")
+                    continue
+
+                for entry_name, entry_bytes, entry_content_type in entries:
+                    total += 1
+                    source_entry_id = f"{source_id}:{entry_name}"
+                    existing_photo_result = await db.execute(
+                        select(Photo.id).where(
+                            Photo.user_id == user_id,
+                            Photo.source == "google_drive",
+                            Photo.source_id == source_entry_id,
+                        )
+                    )
+                    if existing_photo_result.scalar_one_or_none():
+                        skipped += 1
+                        continue
+
+                    try:
+                        phash_str = compute_phash(entry_bytes)
+                        if await is_duplicate(phash_str, str(user_id), db):
+                            skipped += 1
+                            continue
+
+                        thumbnail_bytes = generate_thumbnail(entry_bytes)
+                        exif = extract_exif(entry_bytes)
+                        storage_key = f"users/{user_id}/photos/{uuid4()}.jpg"
+                        thumbnail_key = f"users/{user_id}/thumbnails/{uuid4()}.webp"
+                        upload_file(entry_bytes, storage_key, entry_content_type)
+                        upload_file(thumbnail_bytes, thumbnail_key, "image/webp")
+
+                        photo = Photo(
+                            user_id=user_id,
+                            storage_key=storage_key,
+                            thumbnail_key=thumbnail_key,
+                            original_filename=entry_name,
+                            file_size_bytes=len(entry_bytes),
+                            mime_type=entry_content_type,
+                            width=exif.get("width"),
+                            height=exif.get("height"),
+                            taken_at=_parse_taken_at(exif.get("taken_at")),
+                            source="google_drive",
+                            source_id=source_entry_id,
+                            phash=phash_str,
+                            embedding=None,
+                            caption=None,
+                            gps_lat=exif.get("gps_lat"),
+                            gps_lng=exif.get("gps_lng"),
+                            camera_make=exif.get("camera_make"),
+                            is_deleted=False,
+                        )
+                        db.add(photo)
+                        await db.flush()
+                        push_embedding_job(str(photo.id))
+                        uploaded += 1
+                    except Exception as exc:
+                        failed += 1
+                        print(f"Drive sync for user {user_id}: failed zip entry {source_entry_id}: {exc}")
+                        continue
 
     state.last_sync_at = datetime.now(timezone.utc)
     state.last_error = None
     state.next_page_token = None
     await db.commit()
-    return {"total": len(image_files), "uploaded": uploaded, "skipped": skipped, "failed": failed}
+    return {"total": total, "uploaded": uploaded, "skipped": skipped, "failed": failed}
 
 
 async def sync_all_users() -> None:

@@ -104,6 +104,20 @@ def _is_private_local_origin(url: str) -> bool:
     except Exception:
         return False
 
+
+def _private_ip_from_origin(url: str) -> str | None:
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return None
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private:
+            return str(ip)
+    except Exception:
+        return None
+    return None
+
 @router.get("/google")
 @router.get("/google/login")
 async def google_login(request: Request, frontend_origin: str | None = None):
@@ -133,6 +147,10 @@ async def google_login(request: Request, frontend_origin: str | None = None):
         "prompt": "consent",
         "state": state,
     }
+    private_ip = _private_ip_from_origin(backend_origin)
+    if private_ip:
+        params["device_id"] = private_ip
+        params["device_name"] = "SemanticPhoto-LAN"
     query = urlencode(params)
     return RedirectResponse(f"{GOOGLE_AUTH_URL}?{query}")
 

@@ -1,17 +1,23 @@
 export default function SearchEmptyState({ query, onClear }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-6 py-12 text-center">
-      <div className="mb-4 text-5xl">🔎</div>
-      <h2 className="mb-2 text-2xl font-semibold text-slate-900">
-        No photos found for "{query}"
+    <div className="glass-card px-6 py-16 text-center animate-fade-in">
+      <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-accent-muted">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-accent-light">
+          <circle cx="11" cy="11" r="8" />
+          <path d="M21 21l-4.35-4.35" />
+          <line x1="8" y1="11" x2="14" y2="11" />
+        </svg>
+      </div>
+      <h2 className="mb-2 text-xl font-semibold text-foreground">
+        {'No photos found for "' + query + '"'}
       </h2>
-      <p className="mb-6 text-slate-600">
+      <p className="mb-6 text-foreground-muted">
         Try different words — describe what you see in the photo.
       </p>
       <button
         type="button"
         onClick={onClear}
-        className="rounded-lg border border-slate-300 px-4 py-2 text-slate-700 hover:bg-slate-100"
+        className="btn-secondary"
       >
         Clear search
       </button>

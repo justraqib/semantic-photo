@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ GOOGLE_DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 GOOGLE_DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
 _sync_tasks: dict[str, object] = {}
 _sync_progress: dict[str, dict] = {}
+logger = logging.getLogger(__name__)
 
 
 def _parse_taken_at(exif_taken_at: str | None) -> datetime | None:
@@ -83,6 +85,7 @@ def _set_progress(user_id, **kwargs) -> None:
             "zip_entries_processed": 0,
             "current_item": None,
             "message": "",
+            "recent_failures": [],
         },
     )
     current.update(kwargs)
@@ -107,8 +110,18 @@ def get_sync_progress(user_id) -> dict:
             "zip_entries_processed": 0,
             "current_item": None,
             "message": "",
+            "recent_failures": [],
         },
     )
+
+
+def _append_failure(user_id, item: str, reason: str) -> None:
+    current = get_sync_progress(user_id)
+    recent = list(current.get("recent_failures", []))
+    recent.append({"item": item, "reason": reason})
+    if len(recent) > 10:
+        recent = recent[-10:]
+    _set_progress(user_id, recent_failures=recent)
 
 
 async def _list_drive_children(
@@ -259,6 +272,7 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                 )
                 if existing_photo_result.scalar_one_or_none():
                     skipped += 1
+                    _set_progress(user_id, skipped=skipped)
                     continue
 
                 try:
@@ -316,7 +330,8 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                 except Exception as exc:
                     failed += 1
                     _set_progress(user_id, failed=failed)
-                    print(f"Drive sync for user {user_id}: failed processing file {source_id}: {exc}")
+                    _append_failure(user_id, file_name, str(exc))
+                    logger.exception("Drive sync failed for user %s file %s", user_id, source_id)
                     continue
                 continue
 
@@ -345,7 +360,8 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                 except Exception as exc:
                     failed += 1
                     _set_progress(user_id, failed=failed)
-                    print(f"Drive sync for user {user_id}: failed reading zip {source_id}: {exc}")
+                    _append_failure(user_id, file_name, f"ZIP read failed: {exc}")
+                    logger.exception("Drive sync failed reading zip for user %s file %s", user_id, source_id)
                     continue
 
                 for entry_name, entry_bytes, entry_content_type in entries:
@@ -417,7 +433,8 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                     except Exception as exc:
                         failed += 1
                         _set_progress(user_id, failed=failed)
-                        print(f"Drive sync for user {user_id}: failed zip entry {source_entry_id}: {exc}")
+                        _append_failure(user_id, f"{file_name} -> {entry_name}", str(exc))
+                        logger.exception("Drive sync failed zip entry for user %s entry %s", user_id, source_entry_id)
                         continue
                 _set_progress(
                     user_id,
@@ -447,6 +464,7 @@ async def _run_sync_task(user_id) -> None:
         async with AsyncSessionLocal() as db:
             await sync_user(user_id, db)
     except Exception as exc:
+        logger.exception("Background drive sync task failed for user %s", user_id)
         _set_progress(user_id, status="error", phase="idle", message=str(exc))
     finally:
         _sync_tasks.pop(user_id, None)
@@ -476,4 +494,4 @@ async def sync_all_users() -> None:
             try:
                 await sync_user(user_id, db)
             except Exception as exc:
-                print(f"Drive sync for user {user_id} failed: {exc}")
+                logger.exception("Scheduled drive sync failed for user %s", user_id)

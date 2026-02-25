@@ -275,6 +275,18 @@ export default function Settings() {
                   {syncState.progress.message && (
                     <p className="mt-2 text-xs text-foreground-muted">{syncState.progress.message}</p>
                   )}
+                  {Array.isArray(syncState.progress.recent_failures) && syncState.progress.recent_failures.length > 0 && (
+                    <div className="mt-2 rounded-lg border border-warning/30 bg-warning/5 p-2">
+                      <p className="mb-1 text-[11px] font-semibold text-warning">Recent failures</p>
+                      <div className="max-h-28 space-y-1 overflow-auto text-[11px] text-warning">
+                        {syncState.progress.recent_failures.map((failure, idx) => (
+                          <p key={`${failure.item}-${idx}`} className="truncate">
+                            {failure.item}: {failure.reason}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               <div className="flex flex-col gap-2 text-sm">

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import json
-import mimetypes
 import zipfile
 from datetime import datetime
 from pathlib import Path as FilePath
@@ -23,7 +22,7 @@ from app.services.dedup import compute_phash, is_duplicate
 from app.services.exif import extract_exif
 from app.services.storage import delete_file, generate_presigned_url, get_file, upload_file
 from app.services.thumbnail import generate_thumbnail
-from app.services.zip_utils import extract_image_files_from_zip, is_zip_upload
+from app.services.zip_utils import detect_image_content_type, extract_image_files_from_zip, is_zip_upload
 
 router = APIRouter(prefix="/photos", tags=["photos"])
 
@@ -54,12 +53,12 @@ def _assert_magic_bytes(content_type: str, file_bytes: bytes, filename: str) -> 
         )
 
 
-def _normalize_image_content_type(filename: str, content_type: str | None) -> str:
+def _normalize_image_content_type(filename: str, content_type: str | None, file_bytes: bytes) -> str:
     if content_type and content_type.startswith("image/"):
         return content_type
-    guessed, _ = mimetypes.guess_type(filename)
-    if guessed and guessed.startswith("image/"):
-        return guessed
+    detected = detect_image_content_type(filename, file_bytes)
+    if detected:
+        return detected
     return "application/octet-stream"
 
 
@@ -80,7 +79,7 @@ async def _expand_upload_files(files: list[UploadFile]) -> tuple[list[tuple[str,
                 expanded_images.append((image_name, image_bytes, image_type))
             continue
 
-        content_type = _normalize_image_content_type(filename, file.content_type)
+        content_type = _normalize_image_content_type(filename, file.content_type, file_bytes)
         if not content_type.startswith("image/"):
             failed_files += 1
             continue

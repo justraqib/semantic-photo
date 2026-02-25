@@ -22,6 +22,7 @@ from app.services.dedup import compute_phash, is_duplicate
 from app.services.exif import extract_exif
 from app.services.storage import delete_file, generate_presigned_url, get_file, upload_file
 from app.services.thumbnail import generate_thumbnail
+from app.services.zip_utils import extract_image_files_from_zip, is_zip_upload
 
 router = APIRouter(prefix="/photos", tags=["photos"])
 
@@ -39,6 +40,19 @@ def _parse_taken_at(exif_taken_at: str | None) -> datetime | None:
         return None
 
 
+def _assert_magic_bytes(content_type: str, file_bytes: bytes, filename: str) -> None:
+    if content_type in {"image/jpeg", "image/jpg"} and not file_bytes.startswith(JPEG_MAGIC):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Magic bytes do not match claimed type for {filename} (expected JPEG).",
+        )
+    if content_type == "image/png" and not file_bytes.startswith(PNG_MAGIC):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Magic bytes do not match claimed type for {filename} (expected PNG).",
+        )
+
+
 @router.post("/upload")
 async def upload_photos(
     files: list[UploadFile] = File(...),
@@ -50,102 +64,110 @@ async def upload_photos(
 
     uploaded_count = 0
     skipped_count = 0
+    failed_count = 0
     user_id = str(current_user.id)
     queued_photo_ids: list[str] = []
 
     for file in files:
-        if not file.content_type or not file.content_type.startswith("image/"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid MIME type for {file.filename}. Only image/* is allowed.",
-            )
-
         file_bytes = await file.read()
+        image_payloads: list[tuple[str, bytes, str, bool]]
+        if is_zip_upload(file.filename, file.content_type):
+            image_payloads = [
+                (name, content, content_type, False)
+                for name, content, content_type in extract_image_files_from_zip(file_bytes, MAX_FILE_SIZE_BYTES)
+            ]
+            if not image_payloads:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{file.filename} does not contain any supported image files.",
+                )
+        else:
+            if not file.content_type or not file.content_type.startswith("image/"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid MIME type for {file.filename}. Only image/* and .zip are allowed.",
+                )
+            image_payloads = [(file.filename or "upload", file_bytes, file.content_type, True)]
 
-        if len(file_bytes) > MAX_FILE_SIZE_BYTES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{file.filename} exceeds 50MB limit.",
-            )
+        for image_name, image_bytes, image_content_type, strict_magic in image_payloads:
+            if len(image_bytes) > MAX_FILE_SIZE_BYTES:
+                failed_count += 1
+                continue
 
-        if file.content_type in {"image/jpeg", "image/jpg"} and not file_bytes.startswith(JPEG_MAGIC):
-            raise HTTPException(
-                status_code=422,
-                detail=f"Magic bytes do not match claimed type for {file.filename} (expected JPEG).",
-            )
+            try:
+                _assert_magic_bytes(image_content_type, image_bytes, image_name)
+            except HTTPException:
+                if strict_magic:
+                    raise
+                failed_count += 1
+                continue
 
-        if file.content_type == "image/png" and not file_bytes.startswith(PNG_MAGIC):
-            raise HTTPException(
-                status_code=422,
-                detail=f"Magic bytes do not match claimed type for {file.filename} (expected PNG).",
-            )
+            phash_str = compute_phash(image_bytes)
+            if await is_duplicate(phash_str, user_id, db):
+                skipped_count += 1
+                continue
 
-        phash_str = compute_phash(file_bytes)
-        if await is_duplicate(phash_str, user_id, db):
-            skipped_count += 1
-            continue
+            thumbnail_bytes = generate_thumbnail(image_bytes)
+            exif = extract_exif(image_bytes)
 
-        thumbnail_bytes = generate_thumbnail(file_bytes)
-        exif = extract_exif(file_bytes)
+            storage_key = f"users/{user_id}/photos/{uuid4()}.jpg"
+            thumbnail_key = f"users/{user_id}/thumbnails/{uuid4()}.webp"
 
-        storage_key = f"users/{user_id}/photos/{uuid4()}.jpg"
-        thumbnail_key = f"users/{user_id}/thumbnails/{uuid4()}.webp"
-
-        try:
-            upload_file(file_bytes, storage_key, file.content_type)
-            upload_file(thumbnail_bytes, thumbnail_key, "image/webp")
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Upload storage is not configured: {exc}",
-            ) from exc
-        except ClientError as exc:
-            error_code = exc.response.get("Error", {}).get("Code", "UnknownError")
-            if error_code == "AccessDenied":
+            try:
+                upload_file(image_bytes, storage_key, image_content_type)
+                upload_file(thumbnail_bytes, thumbnail_key, "image/webp")
+            except ValueError as exc:
                 raise HTTPException(
                     status_code=503,
-                    detail="Upload storage access denied. Check Cloudflare R2 token permissions and bucket name.",
+                    detail=f"Upload storage is not configured: {exc}",
                 ) from exc
-            raise HTTPException(
-                status_code=503,
-                detail=f"Upload to storage failed: {error_code}",
-            ) from exc
-        except BotoCoreError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Upload to storage failed: {exc.__class__.__name__}",
-            ) from exc
+            except ClientError as exc:
+                error_code = exc.response.get("Error", {}).get("Code", "UnknownError")
+                if error_code == "AccessDenied":
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Upload storage access denied. Check Cloudflare R2 token permissions and bucket name.",
+                    ) from exc
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Upload to storage failed: {error_code}",
+                ) from exc
+            except BotoCoreError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Upload to storage failed: {exc.__class__.__name__}",
+                ) from exc
 
-        photo = Photo(
-            user_id=current_user.id,
-            storage_key=storage_key,
-            thumbnail_key=thumbnail_key,
-            original_filename=file.filename,
-            file_size_bytes=len(file_bytes),
-            mime_type=file.content_type,
-            width=exif.get("width"),
-            height=exif.get("height"),
-            taken_at=_parse_taken_at(exif.get("taken_at")),
-            source="manual_upload",
-            source_id=None,
-            phash=phash_str,
-            embedding=None,
-            caption=None,
-            gps_lat=exif.get("gps_lat"),
-            gps_lng=exif.get("gps_lng"),
-            camera_make=exif.get("camera_make"),
-            is_deleted=False,
-        )
-        db.add(photo)
-        queued_photo_ids.append(str(photo.id))
-        uploaded_count += 1
+            photo = Photo(
+                user_id=current_user.id,
+                storage_key=storage_key,
+                thumbnail_key=thumbnail_key,
+                original_filename=image_name,
+                file_size_bytes=len(image_bytes),
+                mime_type=image_content_type,
+                width=exif.get("width"),
+                height=exif.get("height"),
+                taken_at=_parse_taken_at(exif.get("taken_at")),
+                source="manual_upload",
+                source_id=None,
+                phash=phash_str,
+                embedding=None,
+                caption=None,
+                gps_lat=exif.get("gps_lat"),
+                gps_lng=exif.get("gps_lng"),
+                camera_make=exif.get("camera_make"),
+                is_deleted=False,
+            )
+            db.add(photo)
+            queued_photo_ids.append(str(photo.id))
+            uploaded_count += 1
 
     await db.commit()
 
     for photo_id in queued_photo_ids:
         push_embedding_job(photo_id)
 
-    return {"uploaded": uploaded_count, "skipped": skipped_count}
+    return {"uploaded": uploaded_count, "skipped": skipped_count, "failed": failed_count}
 
 
 @router.get("")

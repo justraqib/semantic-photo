@@ -30,6 +30,11 @@ export default function Settings() {
     sync_enabled: false,
     status: 'idle',
     last_error: null,
+    pending_count: 0,
+    processed_count: 0,
+    imported_count: 0,
+    skipped_count: 0,
+    failed_count: 0,
   });
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [runningSync, setRunningSync] = useState(false);
@@ -62,9 +67,9 @@ export default function Settings() {
     void loadStatus();
     const poll = setInterval(() => {
       void loadStatus();
-    }, 30_000);
+    }, syncState.status === 'running' ? 3_000 : 30_000);
     return () => clearInterval(poll);
-  }, []);
+  }, [syncState.status]);
 
   const openPicker = async () => {
     const gapi = window.gapi;
@@ -79,8 +84,16 @@ export default function Settings() {
       oauthToken = null;
     }
 
-    if (!gapi?.picker || !google?.picker || !oauthToken || !developerKey) {
-      setStatus('Picker requires Google OAuth login and VITE_GOOGLE_API_KEY in frontend env.');
+    if (!developerKey) {
+      setStatus('Google Picker requires VITE_GOOGLE_API_KEY in frontend/.env and docker compose restart.');
+      return;
+    }
+    if (!oauthToken) {
+      setStatus('Google access token missing. Reconnect Google login and try again.');
+      return;
+    }
+    if (!gapi?.picker || !google?.picker) {
+      setStatus('Google Picker library not loaded yet. Refresh and try again.');
       return;
     }
 
@@ -94,6 +107,15 @@ export default function Settings() {
       .setTitle('Choose Google Drive Folder')
       .addView(view)
       .setCallback(async (data) => {
+        if (data.action === google.picker.Action.CANCEL) {
+          return;
+        }
+        if (data.action === google.picker.Action.ERROR) {
+          setStatus(
+            'The API developer key is invalid. In Google Cloud Console, enable "Google Picker API" and allow http://localhost:5173/* as HTTP referrer.'
+          );
+          return;
+        }
         if (data.action !== google.picker.Action.PICKED) return;
         const doc = data.docs?.[0];
         if (!doc) return;
@@ -114,8 +136,13 @@ export default function Settings() {
   const handleSyncNow = async () => {
     try {
       setRunningSync(true);
-      await triggerSync();
+      const response = await triggerSync();
       await loadStatus();
+      if (response.data?.started === false) {
+        setStatus('Sync is already running.');
+      } else {
+        setStatus('Sync started. Checking Google Drive for new files...');
+      }
     } finally {
       setRunningSync(false);
     }
@@ -193,6 +220,17 @@ export default function Settings() {
               >
                 Disconnect
               </button>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <p className="font-medium text-slate-800">
+                Sync status: {syncState.status === 'running' ? 'Running' : 'Idle'}
+              </p>
+              <p className="mt-1 text-slate-700">
+                Remaining photos: {syncState.pending_count}
+              </p>
+              <p className="text-slate-700">
+                Imported: {syncState.imported_count} | Skipped: {syncState.skipped_count} | Failed: {syncState.failed_count}
+              </p>
             </div>
             {syncState.last_error && (
               <p className="rounded-md bg-red-50 px-3 py-2 text-red-700">{syncState.last_error}</p>

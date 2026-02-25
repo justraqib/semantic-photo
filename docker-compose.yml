@@ -54,6 +54,7 @@ services:
       - backend
     environment:
       - VITE_API_URL=http://localhost:8000
+      - VITE_GOOGLE_API_KEY=${VITE_GOOGLE_API_KEY:-}
     ports:
       - "5173:5173"
     volumes:

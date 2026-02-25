@@ -1,4 +1,5 @@
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Text
+from sqlalchemy import Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -14,3 +15,9 @@ class DriveSyncState(Base):
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
     sync_enabled = Column(Boolean, nullable=False, server_default="true")
     last_error = Column(Text, nullable=True)
+    status = Column(Text, nullable=False, server_default="idle")
+    pending_count = Column(Integer, nullable=False, server_default="0")
+    processed_count = Column(Integer, nullable=False, server_default="0")
+    imported_count = Column(Integer, nullable=False, server_default="0")
+    skipped_count = Column(Integer, nullable=False, server_default="0")
+    failed_count = Column(Integer, nullable=False, server_default="0")

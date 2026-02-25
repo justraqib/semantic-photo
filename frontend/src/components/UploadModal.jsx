@@ -27,14 +27,15 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
     if (!isOpen) reset();
   }, [isOpen, reset]);
 
-  const collectImageFilesFromDirectory = useCallback(async (directoryHandle) => {
+  const collectUploadFilesFromDirectory = useCallback(async (directoryHandle) => {
     const files = [];
 
     const visitDirectory = async (dirHandle) => {
       for await (const entry of dirHandle.values()) {
         if (entry.kind === 'file') {
           const file = await entry.getFile();
-          if (file.type?.startsWith('image/')) {
+          const lowerName = file.name.toLowerCase();
+          if (file.type?.startsWith('image/') || file.type === 'application/zip' || lowerName.endsWith('.zip')) {
             files.push(file);
           }
         } else if (entry.kind === 'directory') {
@@ -56,9 +57,9 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
 
     try {
       const directoryHandle = await window.showDirectoryPicker();
-      const files = await collectImageFilesFromDirectory(directoryHandle);
+      const files = await collectUploadFilesFromDirectory(directoryHandle);
       if (!files.length) {
-        setFolderError('No image files found in selected folder.');
+        setFolderError('No image or ZIP files found in selected folder.');
         return;
       }
       await handleUpload(files);
@@ -66,7 +67,7 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
       if (error?.name === 'AbortError') return;
       setFolderError('Failed to read selected folder.');
     }
-  }, [collectImageFilesFromDirectory, handleUpload]);
+  }, [collectUploadFilesFromDirectory, handleUpload]);
 
   const onDrop = useCallback((acceptedFiles) => {
     void handleUpload(acceptedFiles);
@@ -75,7 +76,7 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     multiple: true,
-    accept: { 'image/*': [] },
+    accept: { 'image/*': [], 'application/zip': ['.zip'] },
   });
 
   const progressEntries = useMemo(() => Object.entries(progress), [progress]);
@@ -94,7 +95,7 @@ export default function UploadModal({ isOpen, onClose, onUploaded }) {
           }`}
         >
           <input {...getInputProps()} />
-          <p className="text-slate-700">Drop photos here or click to browse</p>
+          <p className="text-slate-700">Drop photos or ZIP files here, or click to browse</p>
         </div>
 
         <div className="mt-3">

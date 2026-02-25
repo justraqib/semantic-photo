@@ -2,14 +2,13 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timezone
 import httpx
 
 from app.api.auth import require_current_user
 from app.core.database import get_db
 from app.models.drive import DriveSyncState
 from app.models.user import OAuthAccount, User
-from app.services.drive_sync import refresh_access_token, sync_user
+from app.services.drive_sync import refresh_access_token, start_user_sync_task
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -67,8 +66,14 @@ async def choose_sync_folder(
         "folder_id": state.folder_id,
         "folder_name": state.folder_name,
         "sync_enabled": state.sync_enabled,
+        "status": state.status,
         "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
         "last_error": state.last_error,
+        "pending_count": state.pending_count,
+        "processed_count": state.processed_count,
+        "imported_count": state.imported_count,
+        "skipped_count": state.skipped_count,
+        "failed_count": state.failed_count,
     }
 
 
@@ -92,8 +97,14 @@ async def connect_sync(
         "folder_id": state.folder_id,
         "folder_name": state.folder_name,
         "sync_enabled": state.sync_enabled,
+        "status": state.status,
         "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
         "last_error": state.last_error,
+        "pending_count": state.pending_count,
+        "processed_count": state.processed_count,
+        "imported_count": state.imported_count,
+        "skipped_count": state.skipped_count,
+        "failed_count": state.failed_count,
     }
 
 
@@ -113,6 +124,11 @@ async def get_sync_status(
             "sync_enabled": False,
             "status": "idle",
             "last_error": None,
+            "pending_count": 0,
+            "processed_count": 0,
+            "imported_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
         }
 
     return {
@@ -120,8 +136,13 @@ async def get_sync_status(
         "folder_name": state.folder_name,
         "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
         "sync_enabled": state.sync_enabled,
-        "status": "idle",
+        "status": state.status,
         "last_error": state.last_error,
+        "pending_count": state.pending_count,
+        "processed_count": state.processed_count,
+        "imported_count": state.imported_count,
+        "skipped_count": state.skipped_count,
+        "failed_count": state.failed_count,
     }
 
 
@@ -140,15 +161,8 @@ async def trigger_sync(
     state.last_error = None
     await db.commit()
 
-    try:
-        await sync_user(current_user.id, db)
-        state.last_sync_at = datetime.now(timezone.utc)
-        await db.commit()
-        return {"ok": True}
-    except Exception as exc:
-        state.last_error = str(exc)
-        await db.commit()
-        return {"ok": False, "error": str(exc)}
+    started = start_user_sync_task(current_user.id)
+    return {"ok": True, "started": started}
 
 
 @router.delete("/disconnect")

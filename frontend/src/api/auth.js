@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const DEV_PREVIEW = !import.meta.env.VITE_API_URL && typeof window !== 'undefined' && !window.location.hostname.includes('localhost:8000');
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -10,6 +11,10 @@ const api = axios.create({
 api.interceptors.response.use(
   response => response,
   async error => {
+    // In dev preview mode, don't redirect on API failures
+    if (DEV_PREVIEW) {
+      return Promise.reject(error);
+    }
     if (error.response?.status === 401 && !error.config._retry) {
       error.config._retry = true;
       try {

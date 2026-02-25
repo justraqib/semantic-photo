@@ -215,6 +215,20 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
             zip_files_total=zip_files_total,
             message=f"Found {len(image_files)} candidate files in Drive.",
         )
+        if not image_files:
+            state.last_error = (
+                "No supported files found in selected folder. "
+                "Use a folder containing images or ZIP files with images."
+            )
+            state.last_sync_at = datetime.now(timezone.utc)
+            await db.commit()
+            _set_progress(
+                user_id,
+                status="done",
+                phase="completed",
+                message=state.last_error,
+            )
+            return {"total": 0, "uploaded": 0, "skipped": 0, "failed": 0}
 
         for file_data in image_files:
             source_id = file_data.get("id")

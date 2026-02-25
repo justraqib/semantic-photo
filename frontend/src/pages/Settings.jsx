@@ -8,6 +8,7 @@ import {
   triggerSync,
 } from '../api/sync';
 import { exportPhotosArchive } from '../api/photos';
+import { useAuth } from '../hooks/useAuth';
 
 const GOOGLE_API_SCRIPT_ID = 'google-api-script';
 
@@ -21,7 +22,25 @@ function loadGoogleApiScript() {
   document.body.appendChild(script);
 }
 
+function SettingsCard({ title, description, icon, children }) {
+  return (
+    <div className="glass-card p-5">
+      <div className="mb-4 flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-muted">
+          {icon}
+        </div>
+        <div>
+          <h2 className="text-base font-semibold text-foreground">{title}</h2>
+          {description && <p className="text-sm text-foreground-muted">{description}</p>}
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default function Settings() {
+  const { user } = useAuth();
   const [status, setStatus] = useState('');
   const [syncState, setSyncState] = useState({
     connected: false,
@@ -150,69 +169,173 @@ export default function Settings() {
 
   return (
     <div className="mx-auto max-w-[900px] p-4 md:p-8">
-      <h1 className="mb-4 text-2xl font-semibold text-slate-900">Settings</h1>
-      <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <h2 className="mb-2 text-lg font-medium text-slate-800">Google Drive Sync</h2>
-        {loadingStatus ? (
-          <p className="text-sm text-slate-600">Loading sync status...</p>
-        ) : !syncState.connected ? (
-          <>
-            <p className="mb-4 text-sm text-slate-600">Choose Folder to connect your Drive photos.</p>
+      <h1 className="mb-6 text-2xl font-bold text-foreground">Settings</h1>
+
+      <div className="flex flex-col gap-4">
+        {/* Account card */}
+        <SettingsCard
+          title="Account"
+          description="Your profile information"
+          icon={
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent-light">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          }
+        >
+          <div className="flex items-center gap-4">
+            {user?.avatar_url ? (
+              <img
+                src={user.avatar_url}
+                alt={user.display_name || 'User'}
+                className="h-14 w-14 rounded-xl ring-2 ring-surface-border"
+              />
+            ) : (
+              <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-accent/10 text-lg font-semibold text-accent-light ring-2 ring-surface-border">
+                {(user?.display_name || 'U').slice(0, 1).toUpperCase()}
+              </div>
+            )}
+            <div>
+              <p className="font-medium text-foreground">{user?.display_name || 'User'}</p>
+              <p className="text-sm text-foreground-muted">{user?.email || ''}</p>
+            </div>
+          </div>
+        </SettingsCard>
+
+        {/* Google Drive Sync */}
+        <SettingsCard
+          title="Google Drive Sync"
+          description="Keep your photos in sync with Google Drive"
+          icon={
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent-light">
+              <polyline points="16 16 12 12 8 16" />
+              <line x1="12" y1="12" x2="12" y2="21" />
+              <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+            </svg>
+          }
+        >
+          {loadingStatus ? (
+            <div className="h-8 w-48 animate-pulse rounded-lg bg-surface-light" />
+          ) : !syncState.connected ? (
             <button
               type="button"
               onClick={openPicker}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+              className="btn-primary"
             >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="16 16 12 12 8 16" />
+                <line x1="12" y1="12" x2="12" y2="21" />
+                <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+              </svg>
               Connect Google Drive
             </button>
-          </>
-        ) : (
-          <div className="space-y-3 text-sm text-slate-700">
-            <p><span className="font-medium">Folder:</span> {syncState.folder_name}</p>
-            <p>
-              <span className="font-medium">Last sync:</span>{' '}
-              {syncState.last_sync_at ? new Date(syncState.last_sync_at).toLocaleString() : 'Never'}
-            </p>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleSyncNow}
-                disabled={runningSync}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-60"
-              >
-                {runningSync ? 'Syncing...' : 'Sync Now'}
-              </button>
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={!!syncState.sync_enabled} readOnly />
-                Auto-sync enabled
-              </label>
-              <button
-                type="button"
-                onClick={handleDisconnect}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-              >
-                Disconnect
-              </button>
-            </div>
-            {syncState.last_error && (
-              <p className="rounded-md bg-red-50 px-3 py-2 text-red-700">{syncState.last_error}</p>
-            )}
-          </div>
-        )}
-        {status && <p className="mt-3 text-sm text-slate-600">{status}</p>}
-      </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-foreground-muted">Folder:</span>
+                  <span className="font-medium text-foreground">{syncState.folder_name}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-foreground-muted">Last sync:</span>
+                  <span className="text-foreground">
+                    {syncState.last_sync_at
+                      ? new Date(syncState.last_sync_at).toLocaleString()
+                      : 'Never'}
+                  </span>
+                </div>
+              </div>
 
-      <div className="mt-4 rounded-xl border border-slate-200 bg-white p-5">
-        <h2 className="mb-2 text-lg font-medium text-slate-800">Storage</h2>
-        <p className="mb-4 text-sm text-slate-600">Download all your photos and metadata as a ZIP archive.</p>
-        <button
-          type="button"
-          onClick={handleExportArchive}
-          disabled={isExporting}
-          className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSyncNow}
+                  disabled={runningSync}
+                  className="btn-primary text-sm"
+                >
+                  {runningSync ? 'Syncing...' : 'Sync Now'}
+                </button>
+                <div className="flex items-center gap-2 rounded-xl bg-surface px-3 py-2">
+                  <div className={`h-2 w-2 rounded-full ${syncState.sync_enabled ? 'bg-success' : 'bg-foreground-dim'}`} />
+                  <span className="text-sm text-foreground-muted">
+                    Auto-sync {syncState.sync_enabled ? 'on' : 'off'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  className="btn-ghost text-sm text-danger hover:bg-danger/10"
+                >
+                  Disconnect
+                </button>
+              </div>
+
+              {syncState.last_error && (
+                <div className="rounded-xl bg-danger/10 border border-danger/20 px-3 py-2 text-sm text-danger">
+                  {syncState.last_error}
+                </div>
+              )}
+            </div>
+          )}
+          {status && (
+            <p className="mt-3 text-sm text-foreground-muted">{status}</p>
+          )}
+        </SettingsCard>
+
+        {/* Storage & Export */}
+        <SettingsCard
+          title="Storage & Export"
+          description="Download all your photos and metadata"
+          icon={
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent-light">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          }
         >
-          {isExporting ? 'Preparing export...' : 'Export My Archive'}
-        </button>
+          <button
+            type="button"
+            onClick={handleExportArchive}
+            disabled={isExporting}
+            className="btn-secondary"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            {isExporting ? 'Preparing export...' : 'Export My Archive'}
+          </button>
+        </SettingsCard>
+
+        {/* About */}
+        <SettingsCard
+          title="About"
+          description="Semantic Photo"
+          icon={
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent-light">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+          }
+        >
+          <div className="flex flex-col gap-2 text-sm text-foreground-muted">
+            <p>AI-powered semantic search for your self-hosted photo gallery.</p>
+            <p>
+              Open source &middot; Privacy first &middot;{' '}
+              <a
+                href="https://github.com/justraqib/semantic-photo"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent-light hover:underline"
+              >
+                GitHub
+              </a>
+            </p>
+          </div>
+        </SettingsCard>
       </div>
     </div>
   );

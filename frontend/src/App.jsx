@@ -11,15 +11,26 @@ import Settings from './pages/Settings';
 
 function ProtectedRoute() {
   const { isLoggedIn, isLoading } = useAuth();
-  if (isLoading) return null;
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-surface-border border-t-accent" />
+          <span className="text-sm text-foreground-muted">Loading...</span>
+        </div>
+      </div>
+    );
+  }
   return isLoggedIn ? <Outlet /> : <Navigate to="/login" replace />;
 }
 
 function ProtectedLayout() {
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="min-h-screen bg-background">
       <Navbar />
-      <Outlet />
+      <main className="animate-fade-in">
+        <Outlet />
+      </main>
     </div>
   );
 }

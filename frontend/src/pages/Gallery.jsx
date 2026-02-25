@@ -17,8 +17,112 @@ function SkeletonGrid() {
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
       {Array.from({ length: 10 }).map((_, i) => (
-        <div key={i} className="h-40 animate-pulse rounded-xl bg-slate-200 md:h-48" />
+        <div
+          key={i}
+          className="animate-pulse rounded-xl bg-surface"
+          style={{ height: `${160 + (i % 3) * 40}px` }}
+        />
       ))}
+    </div>
+  );
+}
+
+function MemoryCard({ memory, onPhotoClick }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div className="mb-6 glass-card-hover p-4 animate-slide-up">
+      <div className="flex items-start justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => setIsExpanded((prev) => !prev)}
+          className="text-left"
+        >
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-muted">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent-light">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-foreground">
+                {memory.label} today
+              </p>
+              <p className="text-xs text-foreground-muted">
+                {memory.photo_count} photos &middot; Tap to {isExpanded ? 'collapse' : 'explore'}
+              </p>
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {isExpanded && (
+        <div className="mt-3 flex gap-3 overflow-x-auto pb-1 scrollbar-thin">
+          {memory.photos.map((photo) => (
+            <button
+              key={photo.id}
+              type="button"
+              onClick={() => onPhotoClick(photo)}
+              className="shrink-0 overflow-hidden rounded-xl border border-surface-border transition-all duration-300 hover:ring-2 hover:ring-accent/30"
+            >
+              <img
+                src={photo.thumbnail_url}
+                alt="Memory"
+                className="h-24 w-24 object-cover md:h-28 md:w-28"
+              />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmbeddingProgress({ status, onStart, isPending }) {
+  const pendingEmbeddings = status?.pending_for_user || 0;
+  const progressPercent = status?.progress_percent ?? 0;
+  const etaSeconds = status?.eta_seconds || 0;
+  const etaMinutes = Math.max(1, Math.ceil(etaSeconds / 60));
+  const queueLength = status?.queue_length || 0;
+
+  if (pendingEmbeddings <= 0) return null;
+
+  return (
+    <div className="mb-6 glass-card p-4 animate-fade-in">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="relative flex h-8 w-8 items-center justify-center">
+            <div className="absolute inset-0 animate-pulse-slow rounded-lg bg-accent/20" />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="relative text-accent-light">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground">AI indexing in progress</p>
+            <p className="text-xs text-foreground-muted">
+              {pendingEmbeddings} photo{pendingEmbeddings > 1 ? 's' : ''} remaining &middot; Queue {queueLength} &middot; ~{etaMinutes} min
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onStart}
+          disabled={isPending}
+          className="btn-secondary text-xs px-3 py-1.5"
+        >
+          {isPending ? 'Starting...' : 'Retry'}
+        </button>
+      </div>
+
+      <div className="h-1.5 overflow-hidden rounded-full bg-surface-light">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-accent to-accent-light transition-all duration-700"
+          style={{ width: `${Math.max(2, progressPercent)}%` }}
+        />
+      </div>
     </div>
   );
 }
@@ -30,18 +134,11 @@ export default function Gallery() {
   const { results: searchResults, isLoading: isSearching, isError: isSearchError } = useSearch(query);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
-  const [isMemoryExpanded, setIsMemoryExpanded] = useState(false);
-  const [isMemoryDismissed, setIsMemoryDismissed] = useState(false);
   const sentinelRef = useRef(null);
   const { memory } = useMemories();
   const { status: embeddingStatus } = useEmbeddingStatus();
   const isSearchActive = query.trim().length >= 2;
   const clearSearch = () => setQuery('');
-  const pendingEmbeddings = embeddingStatus?.pending_for_user || 0;
-  const progressPercent = embeddingStatus?.progress_percent ?? 0;
-  const etaSeconds = embeddingStatus?.eta_seconds || 0;
-  const etaMinutes = Math.max(1, Math.ceil(etaSeconds / 60));
-  const queueLength = embeddingStatus?.queue_length || 0;
 
   const startEmbeddingMutation = useMutation({
     mutationFn: startEmbedding,
@@ -85,118 +182,59 @@ export default function Gallery() {
 
   return (
     <div className="mx-auto max-w-[1600px] p-4 md:p-8">
-      {!isMemoryDismissed && memory && (
-        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => setIsMemoryExpanded((prev) => !prev)}
-              className="text-left"
-            >
-              <p className="text-sm font-semibold text-emerald-900">
-                📅 {memory.label} today — {memory.photo_count} photos
-              </p>
-              <p className="mt-1 text-xs text-emerald-700">
-                Tap to {isMemoryExpanded ? 'collapse' : 'expand'}
-              </p>
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsMemoryDismissed(true)}
-              className="rounded px-2 py-1 text-sm text-emerald-700 hover:bg-emerald-100"
-              aria-label="Dismiss memories banner"
-            >
-              ×
-            </button>
-          </div>
-
-          {isMemoryExpanded && (
-            <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
-              {memory.photos.map((photo) => (
-                <button
-                  key={photo.id}
-                  type="button"
-                  onClick={() => setSelectedPhoto(photo)}
-                  className="shrink-0 overflow-hidden rounded-lg border border-emerald-200 bg-white"
-                >
-                  <img
-                    src={photo.thumbnail_url}
-                    alt="Memory"
-                    className="h-24 w-24 object-cover md:h-28 md:w-28"
-                  />
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      {/* Memory card */}
+      {memory && (
+        <MemoryCard memory={memory} onPhotoClick={setSelectedPhoto} />
       )}
 
-      <SearchBar
-        onSearch={setQuery}
-        onClear={clearSearch}
-        isSearching={isSearching}
+      {/* Search bar */}
+      <SearchBar onSearch={setQuery} onClear={clearSearch} isSearching={isSearching} />
+
+      {/* Embedding progress */}
+      <EmbeddingProgress
+        status={embeddingStatus}
+        onStart={() => startEmbeddingMutation.mutate()}
+        isPending={startEmbeddingMutation.isPending}
       />
 
-      {pendingEmbeddings > 0 && (
-        <div className="mb-4 rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 via-sky-50 to-indigo-50 p-4">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-slate-800">
-              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-cyan-500" />
-              <p className="text-sm font-semibold">AI indexing in progress</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => startEmbeddingMutation.mutate()}
-              disabled={startEmbeddingMutation.isPending}
-              className="rounded-lg border border-cyan-300 bg-white px-3 py-1.5 text-xs font-medium text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {startEmbeddingMutation.isPending ? 'Starting...' : 'Start/Retry Now'}
-            </button>
-          </div>
-
-          <div className="mb-2 h-2.5 overflow-hidden rounded-full bg-white">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 transition-all duration-700"
-              style={{ width: `${Math.max(2, progressPercent)}%` }}
-            />
-          </div>
-
-          <p className="text-xs text-slate-700">
-            {pendingEmbeddings} photo{pendingEmbeddings > 1 ? 's' : ''} not embedded yet • Queue {queueLength} • ETA ~{etaMinutes} min
-          </p>
-        </div>
-      )}
-
+      {/* Search active indicator */}
       {isSearchActive && (
-        <div className="mb-4 flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-700">
-          <span>
-            Showing results for "{query}"
+        <div className="mb-4 flex items-center justify-between glass-card px-4 py-3 animate-fade-in">
+          <span className="text-sm text-foreground-muted">
+            {'Showing results for "' + query + '"'}
           </span>
           <button
             type="button"
             onClick={clearSearch}
-            className="rounded-md px-2 py-1 text-xl leading-none text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-dim transition-colors hover:bg-surface-hover hover:text-foreground"
             aria-label="Clear search"
           >
-            ×
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
           </button>
         </div>
       )}
 
+      {/* Loading state */}
       {isLoading && photos.length === 0 && <SkeletonGrid />}
 
+      {/* Empty state */}
       {!isLoading && photos.length === 0 && (
         <EmptyState message="Upload your first photo to get started" />
       )}
 
+      {/* Photo grid */}
       {(!isSearchActive || isSearchError) && photos.length > 0 && (
         <PhotoGrid photos={photos} onPhotoClick={setSelectedPhoto} />
       )}
 
+      {/* Search results */}
       {isSearchActive && (
         <>
           {isSearchError && (
-            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
+            <div className="mb-4 glass-card border-warning/20 bg-warning/5 px-4 py-3 text-sm text-warning animate-fade-in">
               Search is temporarily unavailable. Try again in a moment.
             </div>
           )}
@@ -210,15 +248,20 @@ export default function Gallery() {
         </>
       )}
 
+      {/* Infinite scroll sentinel */}
       {(!isSearchActive || isSearchError) && <div ref={sentinelRef} className="h-8" />}
 
+      {/* Upload FAB */}
       <button
         type="button"
         onClick={() => setIsUploadOpen(true)}
-        className="fixed bottom-6 right-6 z-30 h-14 w-14 rounded-full bg-blue-600 text-3xl text-white shadow-lg hover:bg-blue-500"
+        className="fixed bottom-6 right-6 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-lg shadow-accent/30 transition-all duration-300 hover:bg-accent-hover hover:shadow-xl hover:shadow-accent/40 hover:scale-105 active:scale-95"
         aria-label="Upload photos"
       >
-        +
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
       </button>
 
       <UploadModal

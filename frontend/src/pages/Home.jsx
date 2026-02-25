@@ -3,26 +3,31 @@ import { useAuth } from '../hooks/useAuth';
 export default function Home() {
   const { user, isLoading, logout } = useAuth();
 
-  if (isLoading) return <div className="mt-[40vh] text-center">Loading...</div>;
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-surface-border border-t-accent" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen p-10">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-slate-900">Your Gallery</h1>
+        <h1 className="text-3xl font-bold text-foreground">Your Gallery</h1>
         <div className="flex items-center gap-4">
           {user?.avatar_url && (
             <img src={user.avatar_url} alt={user.display_name}
-              width={36} height={36} className="rounded-full" />
+              width={36} height={36} className="rounded-full ring-2 ring-surface-border" />
           )}
-          <span className="text-slate-700">{user?.display_name}</span>
-          <button onClick={logout} className="rounded-lg border border-slate-300 px-3 py-2">
+          <span className="text-foreground-muted">{user?.display_name}</span>
+          <button onClick={logout} className="btn-secondary text-sm">
             Logout
           </button>
         </div>
       </div>
-      <p className="mb-2 text-slate-700">Welcome back, {user?.display_name}.</p>
-      <p className="mb-6 text-slate-600">Logged in as: <span className="font-medium">{user?.email}</span></p>
-      <p className="text-slate-500">Photo upload coming in Phase 2.</p>
+      <p className="mb-2 text-foreground-muted">Welcome back, {user?.display_name}.</p>
+      <p className="mb-6 text-foreground-dim">Logged in as: <span className="font-medium text-foreground">{user?.email}</span></p>
     </div>
   );
 }

@@ -12,9 +12,9 @@ export default defineConfig({
         name: 'Semantic Photo',
         short_name: 'Gallery',
         description: 'AI-powered semantic photo search',
-        theme_color: '#1A1A2E',
-        background_color: '#ffffff',
-        display: 'standalone',        // ← makes it feel like a native app
+        theme_color: '#0F0F0F',
+        background_color: '#0F0F0F',
+        display: 'standalone',
         orientation: 'portrait',
         scope: '/',
         start_url: '/',
@@ -42,7 +42,7 @@ export default defineConfig({
         runtimeCaching: [
           {
             urlPattern: /^http:\/\/localhost:8000\/auth\/me/,
-            handler: 'NetworkFirst',   // auth always tries network first
+            handler: 'NetworkFirst',
             options: { cacheName: 'api-cache' }
           }
         ]

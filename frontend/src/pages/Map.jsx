@@ -31,21 +31,28 @@ export default function MapPage() {
   const center = photos.length > 0 ? [photos[0].gps_lat, photos[0].gps_lng] : DEFAULT_CENTER;
 
   return (
-    <div className="h-[calc(100vh-65px)] w-full p-4 md:p-6">
-      {isLoading && <div className="h-full w-full animate-pulse rounded-xl bg-slate-200" />}
+    <div className="h-[calc(100vh-57px)] w-full p-4 md:p-6">
+      {isLoading && (
+        <div className="h-full w-full animate-pulse rounded-xl bg-surface" />
+      )}
 
       {!isLoading && isError && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
+        <div className="glass-card border-warning/20 bg-warning/5 px-4 py-3 text-sm text-warning">
           Unable to load map data right now.
         </div>
       )}
 
       {!isLoading && !isError && (
-        <div className="h-full overflow-hidden rounded-xl border border-slate-200">
-          <MapContainer center={center} zoom={photos.length > 0 ? 5 : 2} scrollWheelZoom className="h-full w-full">
+        <div className="h-full overflow-hidden rounded-xl border border-surface-border">
+          <MapContainer
+            center={center}
+            zoom={photos.length > 0 ? 5 : 2}
+            scrollWheelZoom
+            className="h-full w-full"
+          >
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
             />
 
             {photos.map((photo) => (
@@ -56,17 +63,17 @@ export default function MapPage() {
                       <img
                         src={photo.thumbnail_url}
                         alt="Photo location"
-                        className="mb-2 h-24 w-full rounded object-cover"
+                        className="mb-2 h-24 w-full rounded-lg object-cover"
                       />
                     ) : (
-                      <div className="mb-2 flex h-24 w-full items-center justify-center rounded bg-slate-100 text-xs text-slate-500">
+                      <div className="mb-2 flex h-24 w-full items-center justify-center rounded-lg bg-gray-100 text-xs text-gray-500">
                         No preview
                       </div>
                     )}
                     <button
                       type="button"
                       onClick={() => setSelectedPhoto(photo)}
-                      className="w-full rounded bg-slate-900 px-2 py-1 text-xs font-medium text-white hover:bg-slate-800"
+                      className="w-full rounded-lg bg-gray-900 px-2 py-1.5 text-xs font-medium text-white hover:bg-gray-800"
                     >
                       Open in lightbox
                     </button>

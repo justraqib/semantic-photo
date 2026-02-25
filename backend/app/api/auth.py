@@ -47,16 +47,18 @@ def _strip_trailing_slash(url: str) -> str:
     return url.rstrip("/")
 
 
+def _request_origin(request: Request) -> str:
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return _strip_trailing_slash(f"{proto}://{host}")
+
+
 def _allowed_frontend_origins() -> set[str]:
     origins = {_strip_trailing_slash(settings.FRONTEND_URL)}
     if settings.FRONTEND_URLS:
         extra = [item.strip() for item in settings.FRONTEND_URLS.split(",") if item.strip()]
         origins.update(_strip_trailing_slash(item) for item in extra)
     return origins
-
-
-def _request_origin(request: Request) -> str:
-    return f"{request.url.scheme}://{request.url.netloc}"
 
 
 def _choose_frontend_origin(request: Request, frontend_origin: str | None) -> str:
@@ -82,13 +84,6 @@ def _decode_oauth_state(state: str | None) -> dict[str, str]:
     except Exception:
         return {}
     return {}
-
-
-def _valid_origin(url: str | None) -> bool:
-    if not url:
-        return False
-    parsed = urlparse(url)
-    return bool(parsed.scheme and parsed.netloc)
 
 
 def _is_private_local_origin(url: str) -> bool:
@@ -118,6 +113,14 @@ def _private_ip_from_origin(url: str) -> str | None:
         return None
     return None
 
+
+def _choose_backend_origin(request: Request, backend_origin: str | None = None) -> str:
+    configured = _strip_trailing_slash(settings.BACKEND_URL)
+    candidate = _strip_trailing_slash(backend_origin) if backend_origin else _request_origin(request)
+    if candidate == configured or _is_private_local_origin(candidate):
+        return candidate
+    return configured
+
 @router.get("/google")
 @router.get("/google/login")
 async def google_login(request: Request, frontend_origin: str | None = None):
@@ -130,7 +133,7 @@ async def google_login(request: Request, frontend_origin: str | None = None):
         ]
     )
     selected_frontend_origin = _choose_frontend_origin(request, frontend_origin)
-    backend_origin = _request_origin(request)
+    backend_origin = _choose_backend_origin(request)
     redirect_uri = f"{backend_origin}/auth/google/callback"
     state = _encode_oauth_state(
         {
@@ -157,9 +160,7 @@ async def google_login(request: Request, frontend_origin: str | None = None):
 @router.get("/google/callback")
 async def google_callback(code: str, request: Request, response: Response, state: str | None = None, db: AsyncSession = Depends(get_db)):
     state_data = _decode_oauth_state(state)
-    backend_origin = _strip_trailing_slash(state_data.get("backend_origin", "")) or _strip_trailing_slash(settings.BACKEND_URL)
-    if not _valid_origin(backend_origin):
-        backend_origin = _strip_trailing_slash(settings.BACKEND_URL)
+    backend_origin = _choose_backend_origin(request, state_data.get("backend_origin"))
     frontend_origin = _strip_trailing_slash(state_data.get("frontend_origin", "")) or _strip_trailing_slash(settings.FRONTEND_URL)
     if frontend_origin not in _allowed_frontend_origins() and not _is_private_local_origin(frontend_origin):
         frontend_origin = _strip_trailing_slash(settings.FRONTEND_URL)
@@ -260,7 +261,7 @@ async def github_login(request: Request, frontend_origin: str | None = None):
         raise HTTPException(status_code=500, detail="GitHub OAuth is not configured")
 
     selected_frontend_origin = _choose_frontend_origin(request, frontend_origin)
-    backend_origin = _request_origin(request)
+    backend_origin = _choose_backend_origin(request)
     redirect_uri = f"{backend_origin}/auth/github/callback"
     state = _encode_oauth_state(
         {
@@ -288,9 +289,7 @@ async def github_callback(
         raise HTTPException(status_code=500, detail="GitHub OAuth is not configured")
 
     state_data = _decode_oauth_state(state)
-    backend_origin = _strip_trailing_slash(state_data.get("backend_origin", "")) or _strip_trailing_slash(settings.BACKEND_URL)
-    if not _valid_origin(backend_origin):
-        backend_origin = _strip_trailing_slash(settings.BACKEND_URL)
+    backend_origin = _choose_backend_origin(request, state_data.get("backend_origin"))
     frontend_origin = _strip_trailing_slash(state_data.get("frontend_origin", "")) or _strip_trailing_slash(settings.FRONTEND_URL)
     if frontend_origin not in _allowed_frontend_origins() and not _is_private_local_origin(frontend_origin):
         frontend_origin = _strip_trailing_slash(settings.FRONTEND_URL)

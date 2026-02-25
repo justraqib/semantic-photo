@@ -22,6 +22,8 @@ from app.services.zip_utils import extract_image_files_from_zip, is_zip_upload
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 GOOGLE_DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
+_sync_tasks: dict[str, object] = {}
+_sync_progress: dict[str, dict] = {}
 
 
 def _parse_taken_at(exif_taken_at: str | None) -> datetime | None:
@@ -61,6 +63,52 @@ async def refresh_access_token(refresh_token: str) -> str:
     if not access_token:
         raise RuntimeError("Google OAuth response did not include access_token")
     return access_token
+
+
+def _set_progress(user_id, **kwargs) -> None:
+    key = str(user_id)
+    current = _sync_progress.get(
+        key,
+        {
+            "status": "idle",
+            "phase": "idle",
+            "total_files": 0,
+            "processed_files": 0,
+            "uploaded": 0,
+            "skipped": 0,
+            "failed": 0,
+            "zip_files_total": 0,
+            "zip_files_processed": 0,
+            "zip_entries_total": 0,
+            "zip_entries_processed": 0,
+            "current_item": None,
+            "message": "",
+        },
+    )
+    current.update(kwargs)
+    _sync_progress[key] = current
+
+
+def get_sync_progress(user_id) -> dict:
+    key = str(user_id)
+    return _sync_progress.get(
+        key,
+        {
+            "status": "idle",
+            "phase": "idle",
+            "total_files": 0,
+            "processed_files": 0,
+            "uploaded": 0,
+            "skipped": 0,
+            "failed": 0,
+            "zip_files_total": 0,
+            "zip_files_processed": 0,
+            "zip_entries_total": 0,
+            "zip_entries_processed": 0,
+            "current_item": None,
+            "message": "",
+        },
+    )
 
 
 async def _list_drive_children(
@@ -118,6 +166,7 @@ async def _collect_drive_images(
 
 
 async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
+    _set_progress(user_id, status="running", phase="auth", message="Preparing Drive sync...")
     oauth_result = await db.execute(
         select(OAuthAccount).where(
             OAuthAccount.user_id == user_id,
@@ -136,6 +185,7 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
         await db.flush()
 
     if not state.folder_id:
+        _set_progress(user_id, status="error", phase="idle", message="Drive folder is not selected.")
         raise RuntimeError("Drive folder is not selected.")
 
     try:
@@ -144,17 +194,27 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
         state.sync_enabled = False
         state.last_error = "Google account disconnected. Please reconnect."
         await db.commit()
+        _set_progress(user_id, status="error", phase="idle", message=state.last_error)
         return {"total": 0, "uploaded": 0, "skipped": 0, "failed": 0}
 
     headers = {"Authorization": f"Bearer {access_token}"}
     uploaded = 0
     skipped = 0
     failed = 0
-    total = 0
+    processed = 0
     max_upload_bytes = 50 * 1024 * 1024
 
     async with httpx.AsyncClient(timeout=60.0) as client:
+        _set_progress(user_id, phase="listing", message="Scanning Drive folder...")
         image_files = await _collect_drive_images(client, headers, state.folder_id)
+        zip_files_total = sum(1 for f in image_files if is_zip_upload(f.get("name", ""), f.get("mimeType", "")))
+        image_files_total = sum(1 for f in image_files if _looks_like_image(f.get("name", ""), f.get("mimeType", "")))
+        _set_progress(
+            user_id,
+            total_files=image_files_total,
+            zip_files_total=zip_files_total,
+            message=f"Found {len(image_files)} candidate files in Drive.",
+        )
 
         for file_data in image_files:
             source_id = file_data.get("id")
@@ -165,7 +225,17 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                 continue
 
             if _looks_like_image(file_name, mime_type):
-                total += 1
+                processed += 1
+                _set_progress(
+                    user_id,
+                    phase="importing",
+                    current_item=file_name,
+                    processed_files=processed,
+                    uploaded=uploaded,
+                    skipped=skipped,
+                    failed=failed,
+                    message=f"Importing image: {file_name}",
+                )
                 existing_photo_result = await db.execute(
                     select(Photo.id).where(
                         Photo.user_id == user_id,
@@ -193,6 +263,7 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                     phash_str = compute_phash(file_bytes)
                     if await is_duplicate(phash_str, str(user_id), db):
                         skipped += 1
+                        _set_progress(user_id, skipped=skipped)
                         continue
 
                     thumbnail_bytes = generate_thumbnail(file_bytes)
@@ -227,13 +298,21 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                     await db.flush()
                     push_embedding_job(str(photo.id))
                     uploaded += 1
+                    _set_progress(user_id, uploaded=uploaded)
                 except Exception as exc:
                     failed += 1
+                    _set_progress(user_id, failed=failed)
                     print(f"Drive sync for user {user_id}: failed processing file {source_id}: {exc}")
                     continue
                 continue
 
             if is_zip_upload(file_name, mime_type):
+                _set_progress(
+                    user_id,
+                    phase="extracting",
+                    current_item=file_name,
+                    message=f"Extracting ZIP: {file_name}",
+                )
                 try:
                     file_response = await client.get(
                         f"{GOOGLE_DRIVE_API_BASE}/files/{source_id}",
@@ -243,13 +322,32 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                     file_response.raise_for_status()
                     zip_bytes = file_response.content
                     entries = extract_image_files_from_zip(zip_bytes, max_upload_bytes)
+                    current_total_files = get_sync_progress(user_id).get("total_files", 0)
+                    _set_progress(
+                        user_id,
+                        total_files=current_total_files + len(entries),
+                        zip_entries_total=get_sync_progress(user_id).get("zip_entries_total", 0) + len(entries),
+                    )
                 except Exception as exc:
                     failed += 1
+                    _set_progress(user_id, failed=failed)
                     print(f"Drive sync for user {user_id}: failed reading zip {source_id}: {exc}")
                     continue
 
                 for entry_name, entry_bytes, entry_content_type in entries:
-                    total += 1
+                    processed += 1
+                    zip_entries_processed = get_sync_progress(user_id).get("zip_entries_processed", 0) + 1
+                    _set_progress(
+                        user_id,
+                        phase="importing",
+                        current_item=f"{file_name} -> {entry_name}",
+                        processed_files=processed,
+                        zip_entries_processed=zip_entries_processed,
+                        uploaded=uploaded,
+                        skipped=skipped,
+                        failed=failed,
+                        message=f"Importing ZIP entry: {entry_name}",
+                    )
                     source_entry_id = f"{source_id}:{entry_name}"
                     existing_photo_result = await db.execute(
                         select(Photo.id).where(
@@ -260,12 +358,14 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                     )
                     if existing_photo_result.scalar_one_or_none():
                         skipped += 1
+                        _set_progress(user_id, skipped=skipped)
                         continue
 
                     try:
                         phash_str = compute_phash(entry_bytes)
                         if await is_duplicate(phash_str, str(user_id), db):
                             skipped += 1
+                            _set_progress(user_id, skipped=skipped)
                             continue
 
                         thumbnail_bytes = generate_thumbnail(entry_bytes)
@@ -299,16 +399,55 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                         await db.flush()
                         push_embedding_job(str(photo.id))
                         uploaded += 1
+                        _set_progress(user_id, uploaded=uploaded)
                     except Exception as exc:
                         failed += 1
+                        _set_progress(user_id, failed=failed)
                         print(f"Drive sync for user {user_id}: failed zip entry {source_entry_id}: {exc}")
                         continue
+                _set_progress(
+                    user_id,
+                    zip_files_processed=get_sync_progress(user_id).get("zip_files_processed", 0) + 1,
+                )
 
     state.last_sync_at = datetime.now(timezone.utc)
     state.last_error = None
     state.next_page_token = None
     await db.commit()
-    return {"total": total, "uploaded": uploaded, "skipped": skipped, "failed": failed}
+    _set_progress(
+        user_id,
+        status="done",
+        phase="completed",
+        total_files=get_sync_progress(user_id).get("total_files", processed),
+        processed_files=processed,
+        uploaded=uploaded,
+        skipped=skipped,
+        failed=failed,
+        message=f"Sync completed. Uploaded {uploaded}, skipped {skipped}, failed {failed}.",
+    )
+    return {"total": processed, "uploaded": uploaded, "skipped": skipped, "failed": failed}
+
+
+async def _run_sync_task(user_id) -> None:
+    try:
+        async with AsyncSessionLocal() as db:
+            await sync_user(user_id, db)
+    except Exception as exc:
+        _set_progress(user_id, status="error", phase="idle", message=str(exc))
+    finally:
+        _sync_tasks.pop(user_id, None)
+
+
+def start_user_sync_task(user_id) -> bool:
+    import asyncio
+
+    key = str(user_id)
+    active = _sync_tasks.get(key)
+    if active and not active.done():
+        return False
+    _sync_tasks[key] = asyncio.create_task(_run_sync_task(user_id))
+    _set_progress(key, status="running")
+    return True
 
 
 async def sync_all_users() -> None:

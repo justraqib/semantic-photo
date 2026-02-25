@@ -2,14 +2,13 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timezone
 import httpx
 
 from app.api.auth import require_current_user
 from app.core.database import get_db
 from app.models.drive import DriveSyncState
 from app.models.user import OAuthAccount, User
-from app.services.drive_sync import refresh_access_token, sync_user
+from app.services.drive_sync import get_sync_progress, refresh_access_token, start_user_sync_task
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -113,15 +112,18 @@ async def get_sync_status(
             "sync_enabled": False,
             "status": "idle",
             "last_error": None,
+            "progress": get_sync_progress(current_user.id),
         }
 
+    progress = get_sync_progress(current_user.id)
     return {
         "connected": bool(state.folder_id),
         "folder_name": state.folder_name,
         "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
         "sync_enabled": state.sync_enabled,
-        "status": "idle",
+        "status": progress.get("status", "idle"),
         "last_error": state.last_error,
+        "progress": progress,
     }
 
 
@@ -140,15 +142,8 @@ async def trigger_sync(
     state.last_error = None
     await db.commit()
 
-    try:
-        result = await sync_user(current_user.id, db)
-        state.last_sync_at = datetime.now(timezone.utc)
-        await db.commit()
-        return {"ok": True, **result}
-    except Exception as exc:
-        state.last_error = str(exc)
-        await db.commit()
-        return {"ok": False, "error": str(exc)}
+    started = start_user_sync_task(current_user.id)
+    return {"ok": True, "started": started}
 
 
 @router.delete("/disconnect")

@@ -133,8 +133,15 @@ export default function Settings() {
   const handleSyncNow = async () => {
     try {
       setRunningSync(true);
-      await triggerSync();
+      const response = await triggerSync();
       await loadStatus();
+      if (response.data?.ok) {
+        const uploaded = response.data?.uploaded ?? 0;
+        const skipped = response.data?.skipped ?? 0;
+        const failed = response.data?.failed ?? 0;
+        const total = response.data?.total ?? uploaded + skipped + failed;
+        setStatus(`Sync completed. Scanned ${total} files, uploaded ${uploaded}, skipped ${skipped}, failed ${failed}.`);
+      }
     } finally {
       setRunningSync(false);
     }

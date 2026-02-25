@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-import httpx
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
+
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.jobs.queue import push_embedding_job
-from app.models.photo import Photo
 from app.models.drive import DriveSyncState
+from app.models.photo import Photo
 from app.models.user import OAuthAccount
 from app.services.dedup import compute_phash, is_duplicate
 from app.services.exif import extract_exif
@@ -19,6 +20,7 @@ from app.services.thumbnail import generate_thumbnail
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
+GOOGLE_DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
 
 
 def _parse_taken_at(exif_taken_at: str | None) -> datetime | None:
@@ -28,6 +30,13 @@ def _parse_taken_at(exif_taken_at: str | None) -> datetime | None:
         return datetime.strptime(exif_taken_at, "%Y:%m:%d %H:%M:%S")
     except ValueError:
         return None
+
+
+def _looks_like_image(filename: str, mime_type: str) -> bool:
+    if mime_type.startswith("image/"):
+        return True
+    lower = filename.lower()
+    return lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp", ".tiff"))
 
 
 async def refresh_access_token(refresh_token: str) -> str:
@@ -47,7 +56,61 @@ async def refresh_access_token(refresh_token: str) -> str:
     return access_token
 
 
-async def sync_user(user_id, db: AsyncSession) -> None:
+async def _list_drive_children(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    folder_id: str,
+) -> list[dict]:
+    files: list[dict] = []
+    page_token: str | None = None
+    while True:
+        params = {
+            "q": f"'{folder_id}' in parents and trashed=false",
+            "fields": "nextPageToken,files(id,name,mimeType,trashed)",
+            "pageSize": "1000",
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        response = await client.get(
+            f"{GOOGLE_DRIVE_API_BASE}/files",
+            headers=headers,
+            params=params,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        files.extend(payload.get("files", []))
+        page_token = payload.get("nextPageToken")
+        if not page_token:
+            break
+    return files
+
+
+async def _collect_drive_images(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    root_folder_id: str,
+) -> list[dict]:
+    queue = [root_folder_id]
+    images: list[dict] = []
+
+    while queue:
+        current_folder = queue.pop(0)
+        children = await _list_drive_children(client, headers, current_folder)
+        for item in children:
+            mime_type = item.get("mimeType", "")
+            if mime_type == GOOGLE_DRIVE_FOLDER_MIME:
+                queue.append(item["id"])
+                continue
+            if _looks_like_image(item.get("name", ""), mime_type):
+                images.append(item)
+
+    return images
+
+
+async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
     oauth_result = await db.execute(
         select(OAuthAccount).where(
             OAuthAccount.user_id == user_id,
@@ -65,97 +128,56 @@ async def sync_user(user_id, db: AsyncSession) -> None:
         db.add(state)
         await db.flush()
 
+    if not state.folder_id:
+        raise RuntimeError("Drive folder is not selected.")
+
     try:
         access_token = await refresh_access_token(oauth_account.refresh_token)
     except Exception:
         state.sync_enabled = False
         state.last_error = "Google account disconnected. Please reconnect."
         await db.commit()
-        return
+        return {"total": 0, "uploaded": 0, "skipped": 0, "failed": 0}
 
     headers = {"Authorization": f"Bearer {access_token}"}
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        page_token = state.next_page_token
-        if not page_token:
-            start_token_response = await client.get(
-                f"{GOOGLE_DRIVE_API_BASE}/changes/startPageToken",
-                headers=headers,
-            )
-            start_token_response.raise_for_status()
-            page_token = start_token_response.json().get("startPageToken")
-            state.next_page_token = page_token
-            await db.commit()
+    uploaded = 0
+    skipped = 0
+    failed = 0
 
-        if not page_token:
-            raise RuntimeError("Google Drive startPageToken missing")
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        image_files = await _collect_drive_images(client, headers, state.folder_id)
 
-        changes_response = await client.get(
-            f"{GOOGLE_DRIVE_API_BASE}/changes",
-            headers=headers,
-            params={
-                "pageToken": page_token,
-                "spaces": "drive",
-                "includeRemoved": "true",
-                "fields": "changes(fileId,removed,file(id,name,mimeType,trashed,modifiedTime)),nextPageToken,newStartPageToken",
-            },
-        )
-        changes_response.raise_for_status()
-        payload = changes_response.json()
-
-    changes = payload.get("changes", [])
-    print(f"Drive sync for user {user_id}: received {len(changes)} changes")
-
-    filtered_changes: list[dict] = []
-    for change in changes:
-        file_data = change.get("file") or {}
-        if change.get("removed") is True:
-            continue
-        if file_data.get("trashed") is True:
-            continue
-        mime_type = file_data.get("mimeType") or ""
-        if not mime_type.startswith("image/"):
-            continue
-        source_id = file_data.get("id") or change.get("fileId")
-        if not source_id:
-            continue
-
-        existing_photo_result = await db.execute(
-            select(Photo.id).where(
-                Photo.user_id == user_id,
-                Photo.source == "google_drive",
-                Photo.source_id == source_id,
-            )
-        )
-        if existing_photo_result.scalar_one_or_none():
-            continue
-
-        filtered_changes.append(change)
-
-    print(f"Drive sync for user {user_id}: {len(filtered_changes)} changes passed filtering")
-
-    async with httpx.AsyncClient(timeout=60.0) as download_client:
-        for change in filtered_changes:
-            file_data = change.get("file") or {}
-            source_id = file_data.get("id") or change.get("fileId")
+        for file_data in image_files:
+            source_id = file_data.get("id")
             mime_type = file_data.get("mimeType") or "image/jpeg"
             file_name = file_data.get("name") or f"{source_id}.jpg"
+            if not source_id:
+                failed += 1
+                continue
+
+            existing_photo_result = await db.execute(
+                select(Photo.id).where(
+                    Photo.user_id == user_id,
+                    Photo.source == "google_drive",
+                    Photo.source_id == source_id,
+                )
+            )
+            if existing_photo_result.scalar_one_or_none():
+                skipped += 1
+                continue
 
             try:
-                file_response = await download_client.get(
+                file_response = await client.get(
                     f"{GOOGLE_DRIVE_API_BASE}/files/{source_id}",
                     headers=headers,
                     params={"alt": "media"},
                 )
                 file_response.raise_for_status()
                 file_bytes = file_response.content
-            except Exception as exc:
-                print(f"Drive sync for user {user_id}: failed downloading file {source_id}: {exc}")
-                continue
 
-            try:
                 phash_str = compute_phash(file_bytes)
                 if await is_duplicate(phash_str, str(user_id), db):
-                    print(f"Drive sync for user {user_id}: duplicate file skipped {source_id}")
+                    skipped += 1
                     continue
 
                 thumbnail_bytes = generate_thumbnail(file_bytes)
@@ -189,14 +211,17 @@ async def sync_user(user_id, db: AsyncSession) -> None:
                 db.add(photo)
                 await db.flush()
                 push_embedding_job(str(photo.id))
-                print(f"Drive sync for user {user_id}: imported file {source_id} successfully")
+                uploaded += 1
             except Exception as exc:
+                failed += 1
                 print(f"Drive sync for user {user_id}: failed processing file {source_id}: {exc}")
                 continue
 
-    state.next_page_token = payload.get("nextPageToken") or payload.get("newStartPageToken") or state.next_page_token
+    state.last_sync_at = datetime.now(timezone.utc)
     state.last_error = None
+    state.next_page_token = None
     await db.commit()
+    return {"total": len(image_files), "uploaded": uploaded, "skipped": skipped, "failed": failed}
 
 
 async def sync_all_users() -> None:

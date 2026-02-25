@@ -1,4 +1,11 @@
-export default function PhotoCard({ photo, onOpen, renderActions }) {
+export default function PhotoCard({
+  photo,
+  onOpen,
+  renderActions,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
+}) {
   const takenAt = photo?.taken_at ? new Date(photo.taken_at) : null;
   const dateLabel =
     takenAt && !Number.isNaN(takenAt.getTime())
@@ -29,12 +36,25 @@ export default function PhotoCard({ photo, onOpen, renderActions }) {
       )}
 
       {/* Select checkbox */}
-      <label
-        className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-lg bg-black/40 opacity-0 backdrop-blur-sm transition-all duration-300 group-hover:opacity-100"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <input type="checkbox" className="h-3.5 w-3.5 accent-accent" aria-label="Select photo" />
-      </label>
+      {selectable && (
+        <label
+          className={`absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-lg backdrop-blur-sm transition-all duration-300 ${
+            selected ? "bg-accent/90 opacity-100" : "bg-black/40 opacity-0 group-hover:opacity-100"
+          }`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect?.(photo);
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => {}}
+            className="h-3.5 w-3.5 accent-accent"
+            aria-label="Select photo"
+          />
+        </label>
+      )}
 
       {/* Custom actions */}
       {renderActions && (

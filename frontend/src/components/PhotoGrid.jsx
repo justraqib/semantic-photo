@@ -16,7 +16,14 @@ function distributePhotos(photos, columnCount) {
   return columns;
 }
 
-export default function PhotoGrid({ photos = [], onPhotoClick, renderActions }) {
+export default function PhotoGrid({
+  photos = [],
+  onPhotoClick,
+  renderActions,
+  selectable = false,
+  selectedIds = new Set(),
+  onToggleSelect,
+}) {
   const columns2 = useMemo(() => distributePhotos(photos, 2), [photos]);
   const columns3 = useMemo(() => distributePhotos(photos, 3), [photos]);
   const columns4 = useMemo(() => distributePhotos(photos, 4), [photos]);
@@ -30,6 +37,9 @@ export default function PhotoGrid({ photos = [], onPhotoClick, renderActions }) 
           photo={photo}
           onOpen={onPhotoClick}
           renderActions={renderActions}
+          selectable={selectable}
+          selected={selectedIds.has(photo.id)}
+          onToggleSelect={onToggleSelect}
         />
       ))}
     </div>

@@ -141,10 +141,10 @@ async def trigger_sync(
     await db.commit()
 
     try:
-        await sync_user(current_user.id, db)
+        result = await sync_user(current_user.id, db)
         state.last_sync_at = datetime.now(timezone.utc)
         await db.commit()
-        return {"ok": True}
+        return {"ok": True, **result}
     except Exception as exc:
         state.last_error = str(exc)
         await db.commit()

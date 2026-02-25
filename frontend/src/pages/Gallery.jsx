@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { addAlbumPhotos } from '../api/albums';
+import { softDeletePhoto, startEmbedding } from '../api/photos';
 import EmptyState from '../components/EmptyState';
 import Lightbox from '../components/Lightbox';
 import PhotoGrid from '../components/PhotoGrid';
@@ -7,7 +9,7 @@ import SearchEmptyState from '../components/SearchEmptyState';
 import SearchBar from '../components/SearchBar';
 import SearchResults from '../components/SearchResults';
 import UploadModal from '../components/UploadModal';
-import { startEmbedding } from '../api/photos';
+import { useAlbums } from '../hooks/useAlbums';
 import { useEmbeddingStatus } from '../hooks/useEmbeddingStatus';
 import { useMemories } from '../hooks/useMemories';
 import { usePhotos } from '../hooks/usePhotos';
@@ -130,20 +132,46 @@ function EmbeddingProgress({ status, onStart, isPending }) {
 export default function Gallery() {
   const queryClient = useQueryClient();
   const { photos, fetchNextPage, hasNextPage, isLoading } = usePhotos();
+  const { albums } = useAlbums();
   const [query, setQuery] = useState('');
   const { results: searchResults, isLoading: isSearching, isError: isSearchError } = useSearch(query);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [selectedAlbumId, setSelectedAlbumId] = useState('');
   const sentinelRef = useRef(null);
   const { memory } = useMemories();
   const { status: embeddingStatus } = useEmbeddingStatus();
   const isSearchActive = query.trim().length >= 2;
   const clearSearch = () => setQuery('');
+  const hasSelections = selectedIds.size > 0;
 
   const startEmbeddingMutation = useMutation({
     mutationFn: startEmbedding,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['embedding-status'] });
+    },
+  });
+
+  const addToAlbumMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedAlbumId || selectedIds.size === 0) return;
+      await addAlbumPhotos(selectedAlbumId, { photo_ids: Array.from(selectedIds) });
+    },
+    onSuccess: () => {
+      setSelectedIds(new Set());
+      setSelectedAlbumId('');
+      queryClient.invalidateQueries({ queryKey: ['albums'] });
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async () => {
+      await Promise.all(Array.from(selectedIds).map((photoId) => softDeletePhoto(photoId)));
+    },
+    onSuccess: () => {
+      setSelectedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ['photos'] });
     },
   });
 
@@ -180,6 +208,28 @@ export default function Gallery() {
     setSelectedPhoto(photos[selectedIndex - 1]);
   };
 
+  const handleToggleSelect = (photo) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(photo.id)) {
+        next.delete(photo.id);
+      } else {
+        next.add(photo.id);
+      }
+      return next;
+    });
+  };
+
+  const handleAddToAlbumSelected = () => {
+    if (!selectedAlbumId || selectedIds.size === 0) return;
+    addToAlbumMutation.mutate();
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedIds.size === 0) return;
+    bulkDeleteMutation.mutate();
+  };
+
   return (
     <div className="mx-auto max-w-[1600px] p-4 md:p-8">
       {/* Memory card */}
@@ -189,6 +239,50 @@ export default function Gallery() {
 
       {/* Search bar */}
       <SearchBar onSearch={setQuery} onClear={clearSearch} isSearching={isSearching} />
+
+      {/* Bulk action bar */}
+      {hasSelections && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 glass-card px-4 py-3 animate-fade-in">
+          <span className="text-sm text-foreground-muted">
+            {selectedIds.size} selected
+          </span>
+          <select
+            value={selectedAlbumId}
+            onChange={(event) => setSelectedAlbumId(event.target.value)}
+            className="rounded-lg border border-surface-border bg-surface px-3 py-2 text-sm text-foreground"
+          >
+            <option value="">Select album</option>
+            {albums.map((album) => (
+              <option key={album.id} value={album.id}>
+                {album.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={handleAddToAlbumSelected}
+            disabled={!selectedAlbumId || addToAlbumMutation.isPending}
+            className="btn-secondary text-sm disabled:opacity-50"
+          >
+            Add to album
+          </button>
+          <button
+            type="button"
+            onClick={handleDeleteSelected}
+            disabled={bulkDeleteMutation.isPending}
+            className="rounded-lg bg-danger px-3 py-2 text-sm text-white hover:opacity-90 disabled:opacity-50"
+          >
+            Delete selected
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedIds(new Set())}
+            className="text-sm text-foreground-dim hover:text-foreground"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* Embedding progress */}
       <EmbeddingProgress
@@ -227,7 +321,13 @@ export default function Gallery() {
 
       {/* Photo grid */}
       {(!isSearchActive || isSearchError) && photos.length > 0 && (
-        <PhotoGrid photos={photos} onPhotoClick={setSelectedPhoto} />
+        <PhotoGrid
+          photos={photos}
+          onPhotoClick={setSelectedPhoto}
+          selectable
+          selectedIds={selectedIds}
+          onToggleSelect={handleToggleSelect}
+        />
       )}
 
       {/* Search results */}

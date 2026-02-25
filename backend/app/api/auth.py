@@ -1,4 +1,5 @@
 import base64
+import ipaddress
 import json
 from datetime import datetime, timezone
 from urllib.parse import urlencode, urlparse
@@ -60,7 +61,7 @@ def _request_origin(request: Request) -> str:
 
 def _choose_frontend_origin(request: Request, frontend_origin: str | None) -> str:
     origin = _strip_trailing_slash(frontend_origin) if frontend_origin else _strip_trailing_slash(settings.FRONTEND_URL)
-    if origin not in _allowed_frontend_origins():
+    if origin not in _allowed_frontend_origins() and not _is_private_local_origin(origin):
         raise HTTPException(status_code=400, detail=f"Unsupported frontend origin: {origin}")
     return origin
 
@@ -88,6 +89,20 @@ def _valid_origin(url: str | None) -> bool:
         return False
     parsed = urlparse(url)
     return bool(parsed.scheme and parsed.netloc)
+
+
+def _is_private_local_origin(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        if hostname in {"localhost", "127.0.0.1"}:
+            return True
+        ip = ipaddress.ip_address(hostname)
+        return ip.is_private
+    except Exception:
+        return False
 
 @router.get("/google")
 @router.get("/google/login")
@@ -128,7 +143,7 @@ async def google_callback(code: str, request: Request, response: Response, state
     if not _valid_origin(backend_origin):
         backend_origin = _strip_trailing_slash(settings.BACKEND_URL)
     frontend_origin = _strip_trailing_slash(state_data.get("frontend_origin", "")) or _strip_trailing_slash(settings.FRONTEND_URL)
-    if frontend_origin not in _allowed_frontend_origins():
+    if frontend_origin not in _allowed_frontend_origins() and not _is_private_local_origin(frontend_origin):
         frontend_origin = _strip_trailing_slash(settings.FRONTEND_URL)
 
     async with httpx.AsyncClient() as client:
@@ -259,7 +274,7 @@ async def github_callback(
     if not _valid_origin(backend_origin):
         backend_origin = _strip_trailing_slash(settings.BACKEND_URL)
     frontend_origin = _strip_trailing_slash(state_data.get("frontend_origin", "")) or _strip_trailing_slash(settings.FRONTEND_URL)
-    if frontend_origin not in _allowed_frontend_origins():
+    if frontend_origin not in _allowed_frontend_origins() and not _is_private_local_origin(frontend_origin):
         frontend_origin = _strip_trailing_slash(settings.FRONTEND_URL)
 
     async with httpx.AsyncClient() as client:

@@ -286,6 +286,7 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
 
                     if len(file_bytes) > max_upload_bytes:
                         skipped += 1
+                        _set_progress(user_id, skipped=skipped)
                         continue
 
                     phash_str = compute_phash(file_bytes)
@@ -324,10 +325,13 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                     )
                     db.add(photo)
                     await db.flush()
+                    state.last_sync_at = datetime.now(timezone.utc)
+                    await db.commit()
                     push_embedding_job(str(photo.id))
                     uploaded += 1
                     _set_progress(user_id, uploaded=uploaded)
                 except Exception as exc:
+                    await db.rollback()
                     failed += 1
                     _set_progress(user_id, failed=failed)
                     _append_failure(user_id, file_name, str(exc))
@@ -427,10 +431,13 @@ async def sync_user(user_id, db: AsyncSession) -> dict[str, int]:
                         )
                         db.add(photo)
                         await db.flush()
+                        state.last_sync_at = datetime.now(timezone.utc)
+                        await db.commit()
                         push_embedding_job(str(photo.id))
                         uploaded += 1
                         _set_progress(user_id, uploaded=uploaded)
                     except Exception as exc:
+                        await db.rollback()
                         failed += 1
                         _set_progress(user_id, failed=failed)
                         _append_failure(user_id, f"{file_name} -> {entry_name}", str(exc))

@@ -13,6 +13,8 @@ export function usePhotos() {
       return response.data;
     },
     getNextPageParam: (lastPage) => lastPage?.next_cursor || undefined,
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
   });
 
   const photos = useMemo(

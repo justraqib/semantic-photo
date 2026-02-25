@@ -61,6 +61,7 @@ async def choose_sync_folder(
 
     await db.commit()
     await db.refresh(state)
+    started = start_user_sync_task(current_user.id)
     return {
         "user_id": str(state.user_id),
         "folder_id": state.folder_id,
@@ -68,6 +69,7 @@ async def choose_sync_folder(
         "sync_enabled": state.sync_enabled,
         "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
         "last_error": state.last_error,
+        "sync_started": started,
     }
 
 
@@ -86,6 +88,7 @@ async def connect_sync(
 
     await db.commit()
     await db.refresh(state)
+    started = start_user_sync_task(current_user.id) if state.folder_id else False
     return {
         "user_id": str(state.user_id),
         "folder_id": state.folder_id,
@@ -93,6 +96,7 @@ async def connect_sync(
         "sync_enabled": state.sync_enabled,
         "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
         "last_error": state.last_error,
+        "sync_started": started,
     }
 
 

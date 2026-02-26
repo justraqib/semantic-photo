@@ -239,6 +239,22 @@ export default function Settings() {
             </button>
           ) : (
             <div className="flex flex-col gap-3">
+              {(syncState.job || syncState.progress) && (
+                <div className="rounded-xl border border-surface-border bg-surface px-3 py-3 text-xs text-foreground">
+                  <div className="mb-2 flex items-center justify-between text-foreground-muted">
+                    <span>Status: {syncState.job?.status || syncState.status || 'idle'}</span>
+                    <span>Job: {syncState.job?.id?.slice(0, 8) || '-'}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                    <span>Total: {syncState.job?.total_discovered ?? syncState.progress?.total_files ?? 0}</span>
+                    <span>Processed: {syncState.job?.processed_count ?? syncState.progress?.processed_files ?? 0}</span>
+                    <span>Uploaded: {syncState.job?.uploaded_count ?? syncState.progress?.uploaded ?? 0}</span>
+                    <span>Skipped: {syncState.job?.skipped_count ?? syncState.progress?.skipped ?? 0}</span>
+                    <span>Failed: {syncState.job?.failed_count ?? syncState.progress?.failed ?? 0}</span>
+                    <span>Progress: {syncState.progress?.progress_percent ?? 0}%</span>
+                  </div>
+                </div>
+              )}
               <div className="flex flex-col gap-2 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="text-foreground-muted">Folder:</span>

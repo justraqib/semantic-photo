@@ -7,10 +7,11 @@ from uuid import UUID
 from sqlalchemy import delete, extract, select
 
 from app.core.database import AsyncSessionLocal
-from app.jobs.queue import pop_embedding_job, push_embedding_job
+from app.jobs.queue import pop_drive_sync_job, pop_embedding_job, push_embedding_job
 from app.models.memory import Memory
 from app.models.photo import Photo
 from app.services import clip_client, storage
+from app.services.drive_sync import run_drive_sync_job
 
 
 async def run_embedding_worker() -> None:
@@ -50,6 +51,18 @@ async def run_embedding_worker() -> None:
             photo.embedding_generated_at = datetime.now(timezone.utc)
             await db.commit()
             print(f"Embedded photo {photo.id} successfully")
+
+
+async def run_drive_sync_worker() -> None:
+    while True:
+        job_id = await asyncio.to_thread(pop_drive_sync_job)
+        if job_id is None:
+            continue
+        try:
+            await run_drive_sync_job(job_id)
+        except Exception:
+            # Keep worker alive and let job retry pipeline handle failures.
+            await asyncio.sleep(1)
 
 
 async def run_daily_memories_job() -> None:

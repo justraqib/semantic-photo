@@ -1,14 +1,15 @@
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 
 from app.api.auth import require_current_user
 from app.core.database import get_db
 from app.models.drive import DriveSyncState
+from app.models.drive_job import DriveSyncJob
 from app.models.user import OAuthAccount, User
-from app.services.drive_sync import get_sync_progress, refresh_access_token, start_user_sync_task
+from app.services.drive_sync import enqueue_drive_sync_job, get_sync_progress, refresh_access_token
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -61,7 +62,7 @@ async def choose_sync_folder(
 
     await db.commit()
     await db.refresh(state)
-    started = start_user_sync_task(current_user.id)
+    await enqueue_drive_sync_job(db, current_user.id, payload.folder_id)
     return {
         "user_id": str(state.user_id),
         "folder_id": state.folder_id,
@@ -69,7 +70,7 @@ async def choose_sync_folder(
         "sync_enabled": state.sync_enabled,
         "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
         "last_error": state.last_error,
-        "sync_started": started,
+        "sync_started": True,
     }
 
 
@@ -88,7 +89,10 @@ async def connect_sync(
 
     await db.commit()
     await db.refresh(state)
-    started = start_user_sync_task(current_user.id) if state.folder_id else False
+    started = False
+    if state.folder_id:
+        await enqueue_drive_sync_job(db, current_user.id, state.folder_id)
+        started = True
     return {
         "user_id": str(state.user_id),
         "folder_id": state.folder_id,
@@ -120,13 +124,37 @@ async def get_sync_status(
         }
 
     progress = get_sync_progress(current_user.id)
+    job_result = await db.execute(
+        select(DriveSyncJob)
+        .where(DriveSyncJob.user_id == current_user.id)
+        .order_by(desc(DriveSyncJob.created_at))
+        .limit(1)
+    )
+    latest_job = job_result.scalar_one_or_none()
     return {
         "connected": bool(state.folder_id),
         "folder_name": state.folder_name,
         "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
         "sync_enabled": state.sync_enabled,
-        "status": progress.get("status", "idle"),
+        "status": latest_job.status if latest_job else progress.get("status", "idle"),
         "last_error": state.last_error,
+        "job": {
+            "id": str(latest_job.id),
+            "status": latest_job.status,
+            "attempts": latest_job.attempts,
+            "max_attempts": latest_job.max_attempts,
+            "processed_count": latest_job.processed_count,
+            "uploaded_count": latest_job.uploaded_count,
+            "skipped_count": latest_job.skipped_count,
+            "failed_count": latest_job.failed_count,
+            "total_discovered": latest_job.total_discovered,
+            "created_at": latest_job.created_at.isoformat() if latest_job.created_at else None,
+            "started_at": latest_job.started_at.isoformat() if latest_job.started_at else None,
+            "finished_at": latest_job.finished_at.isoformat() if latest_job.finished_at else None,
+            "last_error": latest_job.last_error,
+        }
+        if latest_job
+        else None,
         "progress": progress,
     }
 
@@ -146,8 +174,10 @@ async def trigger_sync(
     state.last_error = None
     await db.commit()
 
-    started = start_user_sync_task(current_user.id)
-    return {"ok": True, "started": started}
+    if not state.folder_id:
+        return {"ok": False, "error": "Drive folder is not selected", "started": False}
+    await enqueue_drive_sync_job(db, current_user.id, state.folder_id)
+    return {"ok": True, "started": True}
 
 
 @router.delete("/disconnect")

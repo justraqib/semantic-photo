@@ -263,6 +263,9 @@ export default function Settings() {
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-foreground">
+                    <span>Progress: {syncState.progress.progress_percent || 0}%</span>
+                    <span>Batch: {syncState.progress.current_batch || 0}</span>
+                    <span>Batch size: {syncState.progress.batch_size || 0}</span>
                     <span>Total files: {syncState.progress.total_files || 0}</span>
                     <span>Processed: {syncState.progress.processed_files || 0}</span>
                     <span>Uploaded: {syncState.progress.uploaded || 0}</span>

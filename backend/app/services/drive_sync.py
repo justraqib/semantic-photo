@@ -40,6 +40,9 @@ def _progress_template() -> dict[str, Any]:
         "status": "idle",
         "phase": "idle",
         "job_id": None,
+        "batch_size": DEFAULT_BATCH_SIZE,
+        "current_batch": 0,
+        "progress_percent": 0,
         "total_files": 0,
         "processed_files": 0,
         "uploaded": 0,
@@ -59,7 +62,33 @@ def _set_progress(user_id: str | UUID, **kwargs) -> None:
     key = str(user_id)
     current = _sync_progress.get(key, _progress_template())
     current.update(kwargs)
+    total_files = int(current.get("total_files") or 0)
+    processed_files = int(current.get("processed_files") or 0)
+    if total_files > 0:
+        current["progress_percent"] = min(100, int((processed_files / total_files) * 100))
+    elif current.get("status") in {"done", "completed"}:
+        current["progress_percent"] = 100
+    else:
+        current["progress_percent"] = 0
     _sync_progress[key] = current
+
+
+def _log_job_progress(user_id: str | UUID, event: str) -> None:
+    progress = get_sync_progress(user_id)
+    logger.info(
+        "drive_sync event=%s user_id=%s job_id=%s phase=%s batch=%s processed=%s total=%s uploaded=%s skipped=%s failed=%s percent=%s",
+        event,
+        user_id,
+        progress.get("job_id"),
+        progress.get("phase"),
+        progress.get("current_batch"),
+        progress.get("processed_files"),
+        progress.get("total_files"),
+        progress.get("uploaded"),
+        progress.get("skipped"),
+        progress.get("failed"),
+        progress.get("progress_percent"),
+    )
 
 
 def _append_failure(user_id: str | UUID, item: str, reason: str) -> None:
@@ -170,6 +199,7 @@ async def enqueue_drive_sync_job(
     await db.refresh(job)
     push_drive_sync_job(str(job.id))
     _set_progress(user_id, status="queued", phase="queued", job_id=str(job.id), message="Sync job queued.")
+    _log_job_progress(user_id, "queued")
     return job
 
 
@@ -378,6 +408,7 @@ async def process_drive_sync_job(job_id: UUID) -> None:
         await db.commit()
 
         _set_progress(job.user_id, status="running", phase="auth", job_id=str(job.id), message="Starting sync job...")
+        _log_job_progress(job.user_id, "started")
 
         oauth_result = await db.execute(
             select(OAuthAccount).where(
@@ -426,10 +457,12 @@ async def process_drive_sync_job(job_id: UUID) -> None:
                 await db.commit()
                 _set_progress(
                     job.user_id,
+                    batch_size=batch_size,
                     total_files=len(files),
                     zip_files_total=zip_count,
                     message=f"Discovered {len(files)} files.",
                 )
+                _log_job_progress(job.user_id, "discovered")
 
                 pending_batch: list[dict[str, Any]] = []
                 for file_data in files:
@@ -480,12 +513,14 @@ async def process_drive_sync_job(job_id: UUID) -> None:
                                     _set_progress(
                                         job.user_id,
                                         phase="importing",
+                                        current_batch=batch_no,
                                         processed_files=counters["processed"],
                                         uploaded=counters["uploaded"],
                                         skipped=counters["skipped"],
                                         failed=counters["failed"],
                                         message=f"Processed batch {batch_no}",
                                     )
+                                    _log_job_progress(job.user_id, "batch_committed")
                         except Exception as exc:
                             counters["failed"] += 1
                             _append_failure(job.user_id, file_name, str(exc))
@@ -540,12 +575,14 @@ async def process_drive_sync_job(job_id: UUID) -> None:
                         _set_progress(
                             job.user_id,
                             phase="importing",
+                            current_batch=batch_no,
                             processed_files=counters["processed"],
                             uploaded=counters["uploaded"],
                             skipped=counters["skipped"],
                             failed=counters["failed"],
                             message=f"Processed batch {batch_no}",
                         )
+                        _log_job_progress(job.user_id, "batch_committed")
 
                 if pending_batch:
                     batch_no += 1
@@ -557,6 +594,17 @@ async def process_drive_sync_job(job_id: UUID) -> None:
                     job.failed_count = counters["failed"]
                     state.last_sync_at = datetime.now(timezone.utc)
                     await db.commit()
+                    _set_progress(
+                        job.user_id,
+                        phase="importing",
+                        current_batch=batch_no,
+                        processed_files=counters["processed"],
+                        uploaded=counters["uploaded"],
+                        skipped=counters["skipped"],
+                        failed=counters["failed"],
+                        message=f"Processed batch {batch_no}",
+                    )
+                    _log_job_progress(job.user_id, "batch_committed")
 
             state.last_error = None
             job.status = "completed"
@@ -566,12 +614,14 @@ async def process_drive_sync_job(job_id: UUID) -> None:
                 job.user_id,
                 status="done",
                 phase="completed",
+                current_batch=batch_no,
                 processed_files=counters["processed"],
                 uploaded=counters["uploaded"],
                 skipped=counters["skipped"],
                 failed=counters["failed"],
                 message=f"Sync completed. Uploaded {counters['uploaded']}, skipped {counters['skipped']}, failed {counters['failed']}.",
             )
+            _log_job_progress(job.user_id, "completed")
         except Exception as exc:
             await db.rollback()
             job.status = "failed"
@@ -582,6 +632,7 @@ async def process_drive_sync_job(job_id: UUID) -> None:
                 push_drive_sync_job(str(job.id))
             _append_failure(job.user_id, "job", str(exc))
             _set_progress(job.user_id, status="error", phase="idle", message=f"Sync failed: {exc}")
+            _log_job_progress(job.user_id, "failed")
             logger.exception("Drive sync job failed job_id=%s", job.id)
 
 
@@ -605,5 +656,6 @@ async def sync_all_users() -> None:
         for state in states:
             try:
                 await enqueue_drive_sync_job(db, state.user_id, state.folder_id)
+                logger.info("drive_sync event=scheduled_enqueue user_id=%s folder_id=%s", state.user_id, state.folder_id)
             except Exception:
                 logger.exception("Failed to enqueue scheduled sync for user=%s", state.user_id)

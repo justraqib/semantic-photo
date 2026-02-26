@@ -1,15 +1,16 @@
+import asyncio
+import httpx
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-import httpx
 
 from app.api.auth import require_current_user
 from app.core.database import get_db
 from app.models.drive import DriveSyncState
 from app.models.drive_job import DriveSyncJob
 from app.models.user import OAuthAccount, User
-from app.services.drive_sync import enqueue_drive_sync_job, get_sync_progress, refresh_access_token
+from app.services.drive_sync import enqueue_drive_sync_job, get_sync_progress, refresh_access_token, run_drive_sync_job
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -62,7 +63,8 @@ async def choose_sync_folder(
 
     await db.commit()
     await db.refresh(state)
-    await enqueue_drive_sync_job(db, current_user.id, payload.folder_id)
+    job = await enqueue_drive_sync_job(db, current_user.id, payload.folder_id)
+    asyncio.create_task(run_drive_sync_job(str(job.id)))
     return {
         "user_id": str(state.user_id),
         "folder_id": state.folder_id,
@@ -91,7 +93,8 @@ async def connect_sync(
     await db.refresh(state)
     started = False
     if state.folder_id:
-        await enqueue_drive_sync_job(db, current_user.id, state.folder_id)
+        job = await enqueue_drive_sync_job(db, current_user.id, state.folder_id)
+        asyncio.create_task(run_drive_sync_job(str(job.id)))
         started = True
     return {
         "user_id": str(state.user_id),
@@ -176,7 +179,8 @@ async def trigger_sync(
 
     if not state.folder_id:
         return {"ok": False, "error": "Drive folder is not selected", "started": False}
-    await enqueue_drive_sync_job(db, current_user.id, state.folder_id)
+    job = await enqueue_drive_sync_job(db, current_user.id, state.folder_id)
+    asyncio.create_task(run_drive_sync_job(str(job.id)))
     return {"ok": True, "started": True}
 
 

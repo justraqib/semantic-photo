@@ -89,6 +89,20 @@ def _log_job_progress(user_id: str | UUID, event: str) -> None:
         progress.get("failed"),
         progress.get("progress_percent"),
     )
+    print(
+        "[drive_sync]",
+        f"event={event}",
+        f"user_id={user_id}",
+        f"job_id={progress.get('job_id')}",
+        f"phase={progress.get('phase')}",
+        f"batch={progress.get('current_batch')}",
+        f"processed={progress.get('processed_files')}/{progress.get('total_files')}",
+        f"uploaded={progress.get('uploaded')}",
+        f"skipped={progress.get('skipped')}",
+        f"failed={progress.get('failed')}",
+        f"percent={progress.get('progress_percent')}",
+        flush=True,
+    )
 
 
 def _append_failure(user_id: str | UUID, item: str, reason: str) -> None:

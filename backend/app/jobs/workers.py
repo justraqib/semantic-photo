@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date, datetime, timezone
 from uuid import UUID
 
@@ -8,10 +9,13 @@ from sqlalchemy import delete, extract, select
 
 from app.core.database import AsyncSessionLocal
 from app.jobs.queue import pop_drive_sync_job, pop_embedding_job, push_embedding_job
+from app.models.drive_job import DriveSyncJob
 from app.models.memory import Memory
 from app.models.photo import Photo
 from app.services import clip_client, storage
 from app.services.drive_sync import run_drive_sync_job
+
+logger = logging.getLogger(__name__)
 
 
 async def run_embedding_worker() -> None:
@@ -54,14 +58,33 @@ async def run_embedding_worker() -> None:
 
 
 async def run_drive_sync_worker() -> None:
+    print("[drive_sync_worker] started", flush=True)
     while True:
-        job_id = await asyncio.to_thread(pop_drive_sync_job)
-        if job_id is None:
-            continue
         try:
+            job_id = await asyncio.to_thread(pop_drive_sync_job)
+            if job_id is None:
+                async with AsyncSessionLocal() as db:
+                    fallback = await db.execute(
+                        select(DriveSyncJob.id)
+                        .where(DriveSyncJob.status == "queued")
+                        .order_by(DriveSyncJob.created_at.asc())
+                        .limit(1)
+                    )
+                    next_id = fallback.scalar_one_or_none()
+                if next_id is None:
+                    await asyncio.sleep(1)
+                    continue
+                job_id = str(next_id)
+                print(f"[drive_sync_worker] fallback_claim job_id={job_id}", flush=True)
+            logger.info("drive_sync_worker event=popped job_id=%s", job_id)
+            print(f"[drive_sync_worker] popped job_id={job_id}", flush=True)
             await run_drive_sync_job(job_id)
+            logger.info("drive_sync_worker event=finished job_id=%s", job_id)
+            print(f"[drive_sync_worker] finished job_id={job_id}", flush=True)
         except Exception:
-            # Keep worker alive and let job retry pipeline handle failures.
+            logger.exception("drive_sync_worker event=error")
+            print("[drive_sync_worker] error", flush=True)
+            # Keep worker alive and let retry pipeline handle failures.
             await asyncio.sleep(1)
 
 

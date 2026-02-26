@@ -239,59 +239,6 @@ export default function Settings() {
             </button>
           ) : (
             <div className="flex flex-col gap-3">
-              {syncState.progress && (
-                <div className="rounded-xl border border-surface-border bg-surface px-3 py-3">
-                  <div className="mb-2 flex items-center justify-between text-xs text-foreground-muted">
-                    <span>Status: {syncState.progress.status || 'idle'}</span>
-                    <span>{syncState.progress.phase || 'idle'}</span>
-                  </div>
-                  <div className="mb-2 h-2 overflow-hidden rounded-full bg-surface-light">
-                    <div
-                      className="h-full rounded-full bg-accent transition-all duration-500"
-                      style={{
-                        width: `${
-                          syncState.progress.total_files > 0
-                            ? Math.min(
-                                100,
-                                Math.round(
-                                  (syncState.progress.processed_files / syncState.progress.total_files) * 100
-                                )
-                              )
-                            : 0
-                        }%`,
-                      }}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-foreground">
-                    <span>Progress: {syncState.progress.progress_percent || 0}%</span>
-                    <span>Batch: {syncState.progress.current_batch || 0}</span>
-                    <span>Batch size: {syncState.progress.batch_size || 0}</span>
-                    <span>Total files: {syncState.progress.total_files || 0}</span>
-                    <span>Processed: {syncState.progress.processed_files || 0}</span>
-                    <span>Uploaded: {syncState.progress.uploaded || 0}</span>
-                    <span>Skipped: {syncState.progress.skipped || 0}</span>
-                    <span>Failed: {syncState.progress.failed || 0}</span>
-                    <span>ZIP files: {(syncState.progress.zip_files_processed || 0)}/{syncState.progress.zip_files_total || 0}</span>
-                    <span>ZIP entries: {(syncState.progress.zip_entries_processed || 0)}/{syncState.progress.zip_entries_total || 0}</span>
-                    <span className="col-span-2 truncate">Now: {syncState.progress.current_item || '-'}</span>
-                  </div>
-                  {syncState.progress.message && (
-                    <p className="mt-2 text-xs text-foreground-muted">{syncState.progress.message}</p>
-                  )}
-                  {Array.isArray(syncState.progress.recent_failures) && syncState.progress.recent_failures.length > 0 && (
-                    <div className="mt-2 rounded-lg border border-warning/30 bg-warning/5 p-2">
-                      <p className="mb-1 text-[11px] font-semibold text-warning">Recent failures</p>
-                      <div className="max-h-28 space-y-1 overflow-auto text-[11px] text-warning">
-                        {syncState.progress.recent_failures.map((failure, idx) => (
-                          <p key={`${failure.item}-${idx}`} className="truncate">
-                            {failure.item}: {failure.reason}
-                          </p>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
               <div className="flex flex-col gap-2 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="text-foreground-muted">Folder:</span>

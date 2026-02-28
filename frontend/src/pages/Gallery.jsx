@@ -3,15 +3,11 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import EmptyState from '../components/EmptyState';
 import Lightbox from '../components/Lightbox';
 import PhotoGrid from '../components/PhotoGrid';
-import SearchEmptyState from '../components/SearchEmptyState';
-import SearchBar from '../components/SearchBar';
-import SearchResults from '../components/SearchResults';
 import UploadModal from '../components/UploadModal';
 import { startEmbedding } from '../api/photos';
 import { useEmbeddingStatus } from '../hooks/useEmbeddingStatus';
 import { useMemories } from '../hooks/useMemories';
 import { usePhotos } from '../hooks/usePhotos';
-import { useSearch } from '../hooks/useSearch';
 
 function SkeletonGrid() {
   return (
@@ -130,15 +126,11 @@ function EmbeddingProgress({ status, onStart, isPending }) {
 export default function Gallery() {
   const queryClient = useQueryClient();
   const { photos, fetchNextPage, hasNextPage, isLoading } = usePhotos();
-  const [query, setQuery] = useState('');
-  const { results: searchResults, isLoading: isSearching, isError: isSearchError } = useSearch(query);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const sentinelRef = useRef(null);
   const { memory } = useMemories();
   const { status: embeddingStatus } = useEmbeddingStatus();
-  const isSearchActive = query.trim().length >= 2;
-  const clearSearch = () => setQuery('');
 
   const startEmbeddingMutation = useMutation({
     mutationFn: startEmbedding,
@@ -187,35 +179,12 @@ export default function Gallery() {
         <MemoryCard memory={memory} onPhotoClick={setSelectedPhoto} />
       )}
 
-      {/* Search bar */}
-      <SearchBar onSearch={setQuery} onClear={clearSearch} isSearching={isSearching} />
-
       {/* Embedding progress */}
       <EmbeddingProgress
         status={embeddingStatus}
         onStart={() => startEmbeddingMutation.mutate()}
         isPending={startEmbeddingMutation.isPending}
       />
-
-      {/* Search active indicator */}
-      {isSearchActive && (
-        <div className="mb-4 flex items-center justify-between glass-card px-4 py-3 animate-fade-in">
-          <span className="text-sm text-foreground-muted">
-            {'Showing results for "' + query + '"'}
-          </span>
-          <button
-            type="button"
-            onClick={clearSearch}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-dim transition-colors hover:bg-surface-hover hover:text-foreground"
-            aria-label="Clear search"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-      )}
 
       {/* Loading state */}
       {isLoading && photos.length === 0 && <SkeletonGrid />}
@@ -226,30 +195,12 @@ export default function Gallery() {
       )}
 
       {/* Photo grid */}
-      {(!isSearchActive || isSearchError) && photos.length > 0 && (
+      {photos.length > 0 && (
         <PhotoGrid photos={photos} onPhotoClick={setSelectedPhoto} />
       )}
 
-      {/* Search results */}
-      {isSearchActive && (
-        <>
-          {isSearchError && (
-            <div className="mb-4 glass-card border-warning/20 bg-warning/5 px-4 py-3 text-sm text-warning animate-fade-in">
-              Search is temporarily unavailable. Try again in a moment.
-            </div>
-          )}
-          {!isSearchError && isSearching && <SkeletonGrid />}
-          {!isSearchError && !isSearching && searchResults.length === 0 && (
-            <SearchEmptyState query={query} onClear={clearSearch} />
-          )}
-          {!isSearchError && searchResults.length > 0 && (
-            <SearchResults results={searchResults} onPhotoClick={setSelectedPhoto} />
-          )}
-        </>
-      )}
-
       {/* Infinite scroll sentinel */}
-      {(!isSearchActive || isSearchError) && <div ref={sentinelRef} className="h-8" />}
+      <div ref={sentinelRef} className="h-8" />
 
       {/* Upload FAB */}
       <button

@@ -1,16 +1,54 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date, datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import delete, extract, select
 
 from app.core.database import AsyncSessionLocal
-from app.jobs.queue import pop_embedding_job, push_embedding_job
+from app.jobs.queue import pop_drive_sync_job, pop_embedding_job, push_drive_sync_job, push_embedding_job
+from app.models.drive_job import DriveSyncJob
 from app.models.memory import Memory
 from app.models.photo import Photo
 from app.services import clip_client, storage
+from app.services.drive_sync import run_drive_sync_job
+from app.services.people import auto_assign_person_cluster
+
+logger = logging.getLogger(__name__)
+
+
+async def _recover_orphaned_drive_jobs() -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(DriveSyncJob).where(DriveSyncJob.status == "running"))
+        orphaned = result.scalars().all()
+        if not orphaned:
+            return
+
+        recovered = 0
+        failed = 0
+        for job in orphaned:
+            attempts = int(job.attempts or 0)
+            max_attempts = int(job.max_attempts or 5)
+            if attempts >= max_attempts:
+                job.status = "failed"
+                job.last_error = "Marked failed during worker recovery after restart."
+                job.finished_at = datetime.now(timezone.utc)
+                failed += 1
+                continue
+
+            job.status = "queued"
+            job.last_error = "Recovered after worker restart."
+            push_drive_sync_job(str(job.id))
+            recovered += 1
+
+        await db.commit()
+
+    print(
+        f"[drive_sync_worker] recovery recovered={recovered} failed={failed}",
+        flush=True,
+    )
 
 
 async def run_embedding_worker() -> None:
@@ -30,7 +68,7 @@ async def run_embedding_worker() -> None:
             if photo is None:
                 continue
 
-            if photo.embedding:
+            if photo.embedding is not None:
                 continue
 
             try:
@@ -41,15 +79,55 @@ async def run_embedding_worker() -> None:
                 continue
 
             embedding = await clip_client.embed_image(image_bytes)
+            if embedding is None and photo.thumbnail_key:
+                # Fallback to generated thumbnail when original bytes are unsupported/corrupt.
+                try:
+                    thumbnail_bytes = await asyncio.to_thread(storage.get_file, photo.thumbnail_key)
+                    embedding = await clip_client.embed_image(thumbnail_bytes)
+                except Exception:
+                    embedding = None
+
             if embedding is None:
-                await asyncio.to_thread(push_embedding_job, str(photo.id))
-                await asyncio.sleep(60)
+                print(f"Embedding skipped for photo {photo.id}: invalid image payload", flush=True)
                 continue
 
             photo.embedding = embedding
             photo.embedding_generated_at = datetime.now(timezone.utc)
+            await auto_assign_person_cluster(db, photo)
             await db.commit()
             print(f"Embedded photo {photo.id} successfully")
+
+
+async def run_drive_sync_worker() -> None:
+    print("[drive_sync_worker] started", flush=True)
+    await _recover_orphaned_drive_jobs()
+    while True:
+        try:
+            job_id = await asyncio.to_thread(pop_drive_sync_job)
+            if job_id is None:
+                async with AsyncSessionLocal() as db:
+                    fallback = await db.execute(
+                        select(DriveSyncJob.id)
+                        .where(DriveSyncJob.status == "queued")
+                        .order_by(DriveSyncJob.created_at.asc())
+                        .limit(1)
+                    )
+                    next_id = fallback.scalar_one_or_none()
+                if next_id is None:
+                    await asyncio.sleep(1)
+                    continue
+                job_id = str(next_id)
+                print(f"[drive_sync_worker] fallback_claim job_id={job_id}", flush=True)
+            logger.info("drive_sync_worker event=popped job_id=%s", job_id)
+            print(f"[drive_sync_worker] popped job_id={job_id}", flush=True)
+            await run_drive_sync_job(job_id)
+            logger.info("drive_sync_worker event=finished job_id=%s", job_id)
+            print(f"[drive_sync_worker] finished job_id={job_id}", flush=True)
+        except Exception:
+            logger.exception("drive_sync_worker event=error")
+            print("[drive_sync_worker] error", flush=True)
+            # Keep worker alive and let retry pipeline handle failures.
+            await asyncio.sleep(1)
 
 
 async def run_daily_memories_job() -> None:

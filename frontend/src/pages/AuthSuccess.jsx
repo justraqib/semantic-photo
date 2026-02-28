@@ -8,8 +8,8 @@ export default function AuthSuccess() {
 
   useEffect(() => {
     queryClient.invalidateQueries({ queryKey: ['user'] });
-    navigate('/gallery');
-  }, []);
+    navigate('/home');
+  }, [navigate, queryClient]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">

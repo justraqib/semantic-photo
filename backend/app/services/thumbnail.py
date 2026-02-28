@@ -4,8 +4,11 @@ from io import BytesIO
 
 from PIL import Image
 
+from app.services.image_codecs import register_optional_image_codecs
+
 
 def generate_thumbnail(image_bytes: bytes) -> bytes:
+    register_optional_image_codecs()
     input_buffer = BytesIO(image_bytes)
     output_buffer = BytesIO()
 

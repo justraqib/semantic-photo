@@ -12,6 +12,28 @@ import { useAuth } from '../hooks/useAuth';
 
 const GOOGLE_API_SCRIPT_ID = 'google-api-script';
 
+function parseDownloadMessage(message) {
+  if (!message) return null;
+  const match = message.match(/(\d+)% \((\d+)MB\/(\d+)MB\)/);
+  if (!match) return null;
+  return {
+    percent: Number(match[1]),
+    downloadedMb: Number(match[2]),
+    totalMb: Number(match[3]),
+  };
+}
+
+function getDownloadInfo(progress) {
+  if (typeof progress?.download_percent === 'number' && progress.download_percent > 0) {
+    return {
+      percent: Number(progress.download_percent),
+      downloadedMb: Number(progress.downloaded_mb || 0),
+      totalMb: Number(progress.download_total_mb || 0),
+    };
+  }
+  return parseDownloadMessage(progress?.message);
+}
+
 function loadGoogleApiScript() {
   if (document.getElementById(GOOGLE_API_SCRIPT_ID)) return;
   const script = document.createElement('script');
@@ -54,6 +76,16 @@ export default function Settings() {
   const [runningSync, setRunningSync] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const tokenRef = useRef(null);
+  const progress = syncState.progress || {};
+  const job = syncState.job || {};
+  const totalFiles = Number(job.total_discovered ?? progress.total_files ?? 0);
+  const processedFiles = Number(job.processed_count ?? progress.processed_files ?? 0);
+  const uploadedFiles = Number(job.uploaded_count ?? progress.uploaded ?? 0);
+  const skippedFiles = Number(job.skipped_count ?? progress.skipped ?? 0);
+  const failedFiles = Number(job.failed_count ?? progress.failed ?? 0);
+  const remainingFiles = Math.max(totalFiles - processedFiles, 0);
+  const processingPercent = totalFiles > 0 ? Math.min(100, Math.round((processedFiles / totalFiles) * 100)) : 0;
+  const downloadInfo = getDownloadInfo(progress);
 
   const loadStatus = async () => {
     try {
@@ -79,11 +111,18 @@ export default function Settings() {
 
   useEffect(() => {
     void loadStatus();
+  }, []);
+
+  useEffect(() => {
+    const livePhases = new Set(['auth', 'listing', 'downloading_zip', 'extracting', 'importing']);
+    const currentPhase = syncState.progress?.phase || 'idle';
+    const isRunning = syncState.status === 'running' || livePhases.has(currentPhase);
+    const pollMs = isRunning ? 2000 : 30000;
     const poll = setInterval(() => {
       void loadStatus();
-    }, 30_000);
+    }, pollMs);
     return () => clearInterval(poll);
-  }, []);
+  }, [syncState.status, syncState.progress?.phase]);
 
   const openPicker = async () => {
     const gapi = window.gapi;
@@ -231,6 +270,55 @@ export default function Settings() {
             </button>
           ) : (
             <div className="flex flex-col gap-3">
+              <div className="rounded-xl border border-surface-border bg-surface px-4 py-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs uppercase tracking-wide text-foreground-muted">Live Sync Status</span>
+                  <span className="text-xs font-medium text-foreground">{syncState.status || 'idle'}</span>
+                </div>
+
+                {progress.phase === 'downloading_zip' && downloadInfo && (
+                  <div className="mb-3">
+                    <div className="mb-1 flex items-center justify-between text-xs text-foreground-muted">
+                      <span>Downloading ZIP</span>
+                      <span>{downloadInfo.percent}%</span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-surface-light">
+                      <div
+                        className="h-full rounded-full bg-accent-light transition-all duration-500 animate-pulse"
+                        style={{ width: `${downloadInfo.percent}%` }}
+                      />
+                    </div>
+                    <p className="mt-1 text-xs text-foreground-dim">
+                      {downloadInfo.downloadedMb}MB / {downloadInfo.totalMb}MB
+                    </p>
+                  </div>
+                )}
+
+                <div className="mb-2 flex items-center justify-between text-xs text-foreground-muted">
+                  <span>Processing</span>
+                  <span>{processingPercent}%</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-surface-light">
+                  <div
+                    className="h-full rounded-full bg-success transition-all duration-500"
+                    style={{ width: `${processingPercent}%` }}
+                  />
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <span className="text-foreground-muted">Total: <span className="text-foreground">{totalFiles}</span></span>
+                  <span className="text-foreground-muted">Remaining: <span className="text-foreground">{remainingFiles}</span></span>
+                  <span className="text-foreground-muted">Processed: <span className="text-foreground">{processedFiles}</span></span>
+                  <span className="text-foreground-muted">Uploaded: <span className="text-success">{uploadedFiles}</span></span>
+                  <span className="text-foreground-muted">Skipped: <span className="text-foreground">{skippedFiles}</span></span>
+                  <span className="text-foreground-muted">Failed: <span className="text-danger">{failedFiles}</span></span>
+                </div>
+
+                {progress.message && (
+                  <p className="mt-2 text-xs text-foreground-dim">{progress.message}</p>
+                )}
+              </div>
+
               <div className="flex flex-col gap-2 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="text-foreground-muted">Folder:</span>

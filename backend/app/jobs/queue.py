@@ -6,6 +6,7 @@ from redis.exceptions import RedisError
 from app.core.config import settings
 
 _QUEUE_NAME = "embedding_jobs"
+_DRIVE_SYNC_QUEUE_NAME = "drive_sync_jobs"
 _redis_client: Redis | None = None
 
 
@@ -60,6 +61,49 @@ def get_embedding_queue_length() -> int:
 
     try:
         length = client.llen(_QUEUE_NAME)
+        return int(length) if length is not None else 0
+    except RedisError:
+        return 0
+
+
+def push_drive_sync_job(job_id: str, prioritize: bool = False) -> None:
+    client = _get_redis_client()
+    if client is None:
+        return
+
+    try:
+        if prioritize:
+            client.lpush(_DRIVE_SYNC_QUEUE_NAME, job_id)
+        else:
+            client.rpush(_DRIVE_SYNC_QUEUE_NAME, job_id)
+    except RedisError:
+        return
+
+
+def pop_drive_sync_job() -> str | None:
+    client = _get_redis_client()
+    if client is None:
+        return None
+
+    try:
+        result = client.blpop(_DRIVE_SYNC_QUEUE_NAME, timeout=1)
+    except RedisError:
+        return None
+
+    if not result:
+        return None
+
+    _, job_id = result
+    return job_id
+
+
+def get_drive_sync_queue_length() -> int:
+    client = _get_redis_client()
+    if client is None:
+        return 0
+
+    try:
+        length = client.llen(_DRIVE_SYNC_QUEUE_NAME)
         return int(length) if length is not None else 0
     except RedisError:
         return 0

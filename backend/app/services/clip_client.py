@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 from app.core.config import settings
 
 _TIMEOUT_SECONDS = 10.0
 _EXPECTED_EMBEDDING_SIZE = 512
+logger = logging.getLogger(__name__)
 
 
 def _base_url() -> str | None:
@@ -37,7 +40,8 @@ async def embed_text(query: str) -> list[float] | None:
             )
             response.raise_for_status()
             return _extract_embedding(response.json())
-    except (httpx.HTTPError, ValueError, TypeError):
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        logger.warning("clip_client embed_text failed: %s", exc)
         return None
 
 
@@ -55,5 +59,6 @@ async def embed_image(image_bytes: bytes) -> list[float] | None:
             )
             response.raise_for_status()
             return _extract_embedding(response.json())
-    except (httpx.HTTPError, ValueError, TypeError):
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        logger.warning("clip_client embed_image failed: %s", exc)
         return None

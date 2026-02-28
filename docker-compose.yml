@@ -35,6 +35,8 @@ services:
     container_name: semantic-photo-backend
     env_file:
       - ./backend/.env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/semantic_photo
     depends_on:
       - postgres
       - redis
@@ -52,8 +54,6 @@ services:
     container_name: semantic-photo-frontend
     depends_on:
       - backend
-    environment:
-      - VITE_API_URL=http://localhost:8000
     ports:
       - "5173:5173"
     volumes:

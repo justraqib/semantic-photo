@@ -7,8 +7,11 @@ from PIL import Image
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.image_codecs import register_optional_image_codecs
+
 
 def compute_phash(image_bytes: bytes) -> str:
+    register_optional_image_codecs()
     with Image.open(BytesIO(image_bytes)) as image:
         return str(imagehash.phash(image))
 

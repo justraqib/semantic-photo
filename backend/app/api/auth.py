@@ -61,23 +61,35 @@ async def google_login():
 
 @router.get("/google/callback")
 async def google_callback(code: str, response: Response, db: AsyncSession = Depends(get_db)):
-    async with httpx.AsyncClient() as client:
-        token_response = await client.post(GOOGLE_TOKEN_URL, data={
-            "code": code,
-            "client_id": settings.GOOGLE_CLIENT_ID,
-            "client_secret": settings.GOOGLE_CLIENT_SECRET,
-            "redirect_uri": f"{settings.BACKEND_URL}/auth/google/callback",
-            "grant_type": "authorization_code"
-        })
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            token_response = await client.post(GOOGLE_TOKEN_URL, data={
+                "code": code,
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "redirect_uri": f"{settings.BACKEND_URL}/auth/google/callback",
+                "grant_type": "authorization_code"
+            })
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Google token exchange failed: {exc.__class__.__name__}"
+        ) from exc
     if token_response.status_code != 200:
         raise HTTPException(status_code=400, detail="Failed to exchange code with Google")
     token_data = token_response.json()
 
-    async with httpx.AsyncClient() as client:
-        userinfo_response = await client.get(
-            GOOGLE_USERINFO_URL,
-            headers={"Authorization": f"Bearer {token_data['access_token']}"}
-        )
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            userinfo_response = await client.get(
+                GOOGLE_USERINFO_URL,
+                headers={"Authorization": f"Bearer {token_data['access_token']}"}
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Google userinfo fetch failed: {exc.__class__.__name__}"
+        ) from exc
     if userinfo_response.status_code != 200:
         raise HTTPException(status_code=400, detail="Failed to get user info from Google")
     google_user = userinfo_response.json()
@@ -256,7 +268,7 @@ async def github_callback(code: str, db: AsyncSession = Depends(get_db)):
     app_access_token = create_access_token(str(user.id))
     raw_refresh_token = await create_refresh_token_for_user(db, user.id)
 
-    redirect = RedirectResponse(url=f"{settings.FRONTEND_URL}/gallery")
+    redirect = RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/success")
     redirect.set_cookie("access_token", app_access_token, httponly=True, samesite="lax", max_age=900)
     redirect.set_cookie("refresh_token", raw_refresh_token, httponly=True, samesite="lax", max_age=86400*30)
     return redirect

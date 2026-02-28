@@ -1,4 +1,5 @@
 from app.models.album import Album, AlbumPhoto
+from app.models.drive_job import DriveSyncCheckpoint, DriveSyncFile, DriveSyncJob
 from app.models.drive import DriveSyncState
 from app.models.memory import Memory
 from app.models.photo import Photo
@@ -16,4 +17,7 @@ __all__ = [
     "Album",
     "AlbumPhoto",
     "DriveSyncState",
+    "DriveSyncJob",
+    "DriveSyncFile",
+    "DriveSyncCheckpoint",
 ]

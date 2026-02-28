@@ -9,6 +9,7 @@ pydantic-settings
 alembic
 boto3
 Pillow
+pillow-heif
 exifread
 imagehash
 redis

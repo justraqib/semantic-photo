@@ -1,16 +1,20 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getApiBaseUrl } from './baseUrl';
+
+const API_BASE_URL = getApiBaseUrl();
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true,
+  timeout: 15000,
 });
 
 api.interceptors.response.use(
   response => response,
   async error => {
-    if (error.response?.status === 401 && !error.config._retry) {
+    const requestUrl = error.config?.url || '';
+    if (error.response?.status === 401 && !error.config?._retry && !requestUrl.includes('/auth/refresh')) {
       error.config._retry = true;
       try {
         await api.post('/auth/refresh');
